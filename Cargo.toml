@@ -71,9 +71,6 @@ windows = { version = "0.62", features = [
 [build-dependencies]
 embed-resource = "3.0"
 
-[target.'cfg(windows)'.build-dependencies]
-windows = { version = "0.62", features = ["Win32_System_SystemServices"] }
-
 [profile.release]
 opt-level = "z"
 lto = true          # full LTO (обычно меньше бинарь, но медленнее)

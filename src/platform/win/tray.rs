@@ -220,8 +220,8 @@ fn balloon_common(
 
     tracing::debug!(
         msg = "tray_balloon_attempt",
-        title = title,
-        text = text,
+        title_length = title.chars().count(),
+        text_length = text.chars().count(),
         flags = flags,
     );
 
@@ -248,7 +248,7 @@ fn balloon_common(
             tracing::debug!(
                 msg = "tray_balloon_suppressed",
                 suppressed_total = g.suppressed,
-                title = title
+                title_length = title.chars().count()
             );
             return Ok(());
         }
@@ -275,7 +275,10 @@ fn balloon_common(
     fill_wide(&mut nid.szInfo, text);
 
     if unsafe { Shell_NotifyIconW(NIM_MODIFY, &raw const nid).as_bool() } {
-        tracing::debug!(msg = "tray_balloon_shown", title = title);
+        tracing::debug!(
+            msg = "tray_balloon_shown",
+            title_length = title.chars().count()
+        );
         return Ok(());
     }
 

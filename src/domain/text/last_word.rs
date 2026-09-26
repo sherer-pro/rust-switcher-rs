@@ -128,7 +128,11 @@ pub fn autoconvert_last_word(state: &mut AppState) {
         tracing::trace!(reason = %reason.as_str(), "autoconvert skip: decision");
         return;
     }
-    tracing::trace!(word = %payload.run.text, converted = %converted, "autoconvert decision");
+    tracing::trace!(
+        input_length = payload.run_len,
+        output_length = converted.chars().count(),
+        "autoconvert decision"
+    );
     if let Err(err) = apply_last_word_replacement(&payload, &converted) {
         tracing::warn!(error = %err.as_str(), "autoconvert apply failed");
         return;
@@ -509,11 +513,18 @@ fn convert_last_word_impl(state: &mut AppState, switch_layout: bool, mode: Direc
         return false;
     }
     if matches!(mode, DirectionMode::TextFirst) && smart::text_looks_correct(&payload.run.text) {
-        tracing::trace!(text = %payload.run.text, "smart convert skipped: text already looks correct");
+        tracing::trace!(
+            input_length = payload.run_len,
+            "smart convert skipped: text already looks correct"
+        );
         return true;
     }
     let converted = convert_with_mode(&payload.run.text, &payload.run.layout, mode);
-    tracing::trace!(%converted, "converted");
+    tracing::trace!(
+        input_length = payload.run_len,
+        output_length = converted.chars().count(),
+        "last word converted"
+    );
     if apply_last_word_conversion(&payload, &converted) {
         update_journal(&payload, &converted);
         restore.commit();
@@ -551,11 +562,18 @@ fn convert_last_sequence_impl(state: &mut AppState, switch_layout: bool, mode: D
         return;
     }
     if matches!(mode, DirectionMode::TextFirst) && smart::text_looks_correct(&payload.seq_text) {
-        tracing::trace!(text = %payload.seq_text, "smart convert skipped: text already looks correct");
+        tracing::trace!(
+            input_length = payload.seq_len,
+            "smart convert skipped: text already looks correct"
+        );
         return;
     }
     let converted = convert_sequence_runs(&payload.runs, mode);
-    tracing::trace!(%converted, "converted");
+    tracing::trace!(
+        input_length = payload.seq_len,
+        output_length = converted.chars().count(),
+        "last sequence converted"
+    );
     if apply_last_sequence_conversion(&payload, &converted) {
         update_journal_sequence(&payload, &converted, mode);
         restore.commit();
@@ -620,10 +638,8 @@ fn take_last_word_payload() -> Option<LastRunPayload> {
         suffix_text_and_meta(&suffix_runs);
     let run_len = run.text.chars().count();
     tracing::trace!(
-        run_text = %run.text,
         run_layout = ?run.layout,
         run_origin = ?run.origin,
-        suffix_text = %suffix_text,
         run_len,
         suffix_len,
         suffix_spaces_only,
@@ -660,9 +676,7 @@ fn take_last_sequence_payload() -> Option<LastSequencePayload> {
     let seq_len = seq_text.chars().count();
     let seq_has_newline = seq_text.contains('\n') || seq_text.contains('\r');
     tracing::trace!(
-        seq_text = %seq_text,
         seq_layout = ?layout,
-        suffix_text = %suffix_text,
         seq_len,
         suffix_len,
         suffix_spaces_only,
@@ -768,7 +782,10 @@ fn update_journal_sequence(p: &LastSequencePayload, converted: &str, mode: Direc
         }
     }));
     crate::input_journal::push_runs(p.suffix_runs.iter().cloned());
-    tracing::trace!(%converted, "journal updated (sequence)");
+    tracing::trace!(
+        output_length = converted.chars().count(),
+        "journal updated (sequence)"
+    );
 }
 fn restore_journal_original(p: &LastRunPayload) {
     crate::input_journal::push_run(p.run.clone());

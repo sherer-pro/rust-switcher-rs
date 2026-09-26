@@ -11,6 +11,7 @@ pub(crate) mod hotkey_format;
 pub(crate) mod keyboard;
 pub(crate) mod menu_theme;
 pub(crate) mod mouse;
+pub(crate) mod secure_input;
 pub mod state;
 pub(crate) mod tray;
 mod tray_dispatch;
@@ -986,6 +987,17 @@ fn handle_switch_layout_hotkey(state: &mut AppState) {
 }
 
 fn execute_runtime_command(hwnd: HWND, state: &mut AppState, command: RuntimeCommand) {
+    let secure_status = secure_input::protect_current_context();
+    if secure_input::blocks_command(secure_status, command) {
+        tracing::trace!(
+            password_field_detected = true,
+            journal_cleared = true,
+            command = secure_input::command_kind(command),
+            "text conversion blocked in secure input context"
+        );
+        return;
+    }
+
     match command {
         RuntimeCommand::AutoconvertLastWord => {
             if state.autoconvert_feature_enabled && state.autoconvert_enabled {

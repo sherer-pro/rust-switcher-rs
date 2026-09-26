@@ -25,6 +25,7 @@ pub(super) enum SelectionProbe {
     SelectionText(String),
     SelectionPresentButIneligible,
     SelectionPresentButUnreadable(windows::core::Error),
+    SecureField,
     Unsupported,
 }
 
@@ -72,6 +73,10 @@ pub(super) fn probe_selection_uia(max_chars: usize) -> SelectionProbe {
             return SelectionProbe::Unsupported;
         }
     };
+
+    if unsafe { focused.CurrentIsPassword() }.is_ok_and(|value| value.as_bool()) {
+        return SelectionProbe::SecureField;
+    }
 
     let pattern: IUIAutomationTextPattern =
         match unsafe { focused.GetCurrentPatternAs(UIA_TextPatternId) } {
@@ -134,6 +139,10 @@ pub(super) fn probe_selection_win32(max_chars: usize) -> SelectionProbe {
 
     if !is_supported_edit_control(focus) {
         return SelectionProbe::Unsupported;
+    }
+
+    if crate::platform::win::secure_input::win32_password_state(focus) == Some(true) {
+        return SelectionProbe::SecureField;
     }
 
     let mut start: u32 = 0;

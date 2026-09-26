@@ -200,6 +200,10 @@ impl InputJournal {
         self.last_token_autoconverted = false;
     }
 
+    fn contains_text(&self) -> bool {
+        self.total_chars != 0
+    }
+
     fn append_segment_end(
         &mut self,
         text: &str,
@@ -1098,6 +1102,55 @@ pub fn invalidate() {
     });
     #[cfg(all(test, windows))]
     clear_foreground_cache_for_test();
+}
+
+/// Removes all text retained by the active journal and its per-control cache.
+///
+/// Secure input protection uses this stronger operation so text captured before
+/// focus entered a password control cannot later be restored from the cache.
+#[cfg(any(test, windows))]
+pub fn clear_secure_input_data() -> bool {
+    let active_had_text = with_journal_mut(|j| {
+        let had_text = j.contains_text();
+        j.clear();
+        had_text
+    });
+
+    #[cfg(windows)]
+    let cache_had_text = with_journal_cache_mut(|cache| {
+        let had_text = cache.values().any(|cached| cached.journal.contains_text());
+        cache.clear();
+        had_text
+    });
+    #[cfg(not(windows))]
+    let cache_had_text = false;
+
+    active_had_text || cache_had_text
+}
+
+#[cfg(all(test, windows))]
+mod secure_clear_tests {
+    use super::*;
+
+    #[test]
+    fn secure_clear_removes_active_and_cached_journals() {
+        let _guard = test_guard();
+        invalidate();
+
+        test_switch_foreground(101, 1_000);
+        push_text("cached-secret");
+        test_switch_foreground(202, 1_100);
+        push_text("active-secret");
+
+        assert!(clear_secure_input_data());
+        assert!(runs_snapshot().is_empty());
+
+        test_switch_foreground(101, 1_200);
+        assert!(
+            runs_snapshot().is_empty(),
+            "secure clear must prevent cached text from being restored"
+        );
+    }
 }
 
 #[cfg(all(test, windows))]

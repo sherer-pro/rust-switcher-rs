@@ -43,6 +43,15 @@ fn probe_convertible_selection(max_chars: usize) -> Option<String> {
         SelectionProbe::SelectionPresentButIneligible => {
             tracing::trace!("UIA selection present but ineligible");
         }
+        SelectionProbe::SecureField => {
+            let cleared = crate::input::ring_buffer::clear_secure_input_data();
+            tracing::trace!(
+                password_field_detected = true,
+                journal_cleared = cleared,
+                "selection read blocked in secure input context"
+            );
+            return None;
+        }
         SelectionProbe::NoSelection | SelectionProbe::Unsupported => {}
     }
 
@@ -60,6 +69,15 @@ fn probe_convertible_selection(max_chars: usize) -> Option<String> {
         }
         SelectionProbe::SelectionPresentButIneligible => {
             tracing::trace!("Win32 selection present but ineligible");
+            None
+        }
+        SelectionProbe::SecureField => {
+            let cleared = crate::input::ring_buffer::clear_secure_input_data();
+            tracing::trace!(
+                password_field_detected = true,
+                journal_cleared = cleared,
+                "selection read blocked in secure input context"
+            );
             None
         }
         SelectionProbe::NoSelection | SelectionProbe::Unsupported => None,
@@ -85,7 +103,7 @@ fn convert_selection_if_any_impl(state: &mut AppState, mode: SelectionDirectionM
         ConvertOutcome::Noop => false,
         ConvertOutcome::Ok => true,
         ConvertOutcome::Err(e) => {
-            tracing::warn!(user_text = e.user_text(), error = ?e, "selection conversion failed");
+            tracing::warn!(error = ?e, "selection conversion failed");
             true
         }
     }
@@ -116,7 +134,7 @@ fn convert_selection_impl(state: &mut AppState, mode: SelectionDirectionMode) {
         ConvertOutcome::Noop => tracing::trace!("no selection"),
         ConvertOutcome::Ok => {}
         ConvertOutcome::Err(e) => {
-            tracing::warn!(user_text = e.user_text(), error = ?e, "selection conversion failed");
+            tracing::warn!(error = ?e, "selection conversion failed");
         }
     }
 }
@@ -166,16 +184,6 @@ enum ConvertSelectionError {
     Reselect,
 }
 
-impl ConvertSelectionError {
-    fn user_text(&self) -> &'static str {
-        match self {
-            Self::Delete => "Failed to delete selection",
-            Self::InsertConverted => "Failed to insert converted text",
-            Self::Reselect => "Failed to reselect inserted text",
-        }
-    }
-}
-
 /// Replaces currently selected text with layout converted text.
 ///
 /// Returns `Ok(())` when:
@@ -190,7 +198,10 @@ fn convert_selection_from_text(
     mode: SelectionDirectionMode,
 ) -> Result<(), ConvertSelectionError> {
     if matches!(mode, SelectionDirectionMode::TextOnly) && smart::text_looks_correct(text) {
-        tracing::trace!(%text, "smart selection convert skipped: text already looks correct");
+        tracing::trace!(
+            input_length = text.chars().count(),
+            "smart selection convert skipped: text already looks correct"
+        );
         return Ok(());
     }
 

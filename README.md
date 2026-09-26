@@ -50,6 +50,19 @@ To remove a binding, focus its hotkey field and press Backspace or Delete.
 
 ## Development
 
+Security and privacy properties are documented in [`docs/security.md`](docs/security.md). Windows
+acceptance checks are listed in
+[`docs/windows-11-manual-test-plan.md`](docs/windows-11-manual-test-plan.md).
+
+To build a local release from the reviewed source tree and print its SHA-256, run from the
+repository root:
+
+```powershell
+.\scripts\build-release.ps1
+```
+
+Do not treat an upstream release executable as the production binary for a reviewed fork.
+
 This project includes a ready-to-use `bacon.toml` for a fast development loop.
 
 ### Bacon hotkeys (from `bacon.toml`)

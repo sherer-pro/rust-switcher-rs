@@ -11,3 +11,11 @@ This repository uses local instruction files by default.
 - Do not run pre-task live fetch in normal local development.
 - Use codex-tools initialization scripts only when bootstrapping a fresh Codex web-agent environment from scratch.
 - Do not commit `.codex/AGENTS.remote.md`.
+
+## Локальные результаты и графы
+
+Сгенерированные графы `graphify-out/`, отчёты, captures и результаты прогонов
+хранятся локально в игнорируемых каталогах. Не добавляйте их в Git, включая
+`git add -f`. Исходники, необходимые тестовые данные и эталоны остаются в Git.
+После нового клонирования создайте граф штатной командой проекта перед его
+использованием; наличие сохранённого графа в истории Git не требуется.

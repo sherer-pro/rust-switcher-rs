@@ -26,3 +26,8 @@ target
 **.zip
 
 .codex/AGENTS.remote.md
+
+# Generated graphs remain local, including nested corpus roots.
+graphify-out/
+graphify-out.next/
+/app.zip

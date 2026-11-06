@@ -562,6 +562,7 @@ mod tests {
     }
 
     fn load_layout(klid: &str) -> LayoutId {
+        crate::keyboard_test_fixture::require_hosted_keyboard_fixture();
         let name: Vec<u16> = klid.encode_utf16().chain(Some(0)).collect();
         let hkl = unsafe { LoadKeyboardLayoutW(PCWSTR(name.as_ptr()), KLF_NOTELLSHELL) }
             .expect("the native test layout must be installed on the Windows runner");
@@ -743,6 +744,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "changes Windows keyboard layouts; requires the disposable hosted fixture"]
     fn native_layout_preserves_leading_punctuation_and_case() {
         let _guard = test_guard();
         assert_eq!(
@@ -756,6 +758,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "changes Windows keyboard layouts; requires the disposable hosted fixture"]
     fn native_layout_uses_physical_positions_for_qwertz() {
         let _guard = test_guard();
         assert_eq!(
@@ -765,6 +768,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "changes Windows keyboard layouts; requires the disposable hosted fixture"]
     fn native_layout_supports_ukrainian_without_a_language_allowlist() {
         let _guard = test_guard();
         assert_eq!(
@@ -774,6 +778,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "changes Windows keyboard layouts; requires the disposable hosted fixture"]
     fn native_layout_uses_french_number_row_and_azerty_positions() {
         let _guard = test_guard();
         assert_eq!(
@@ -783,6 +788,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "changes Windows keyboard layouts; requires the disposable hosted fixture"]
     fn native_layout_recovers_composed_dead_key_as_a_key_sequence() {
         let _guard = test_guard();
         assert_eq!(
@@ -796,6 +802,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "changes Windows keyboard layouts; requires the disposable hosted fixture"]
     fn native_layout_keeps_english_keyboard_variants_distinct() {
         let _guard = test_guard();
         assert_eq!(
@@ -805,6 +812,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "changes Windows keyboard layouts; requires the disposable hosted fixture"]
     fn native_layout_flushes_a_trailing_dead_key_as_visible_text() {
         let _guard = test_guard();
         assert_eq!(
@@ -814,6 +822,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "changes Windows keyboard layouts; requires the disposable hosted fixture"]
     fn native_layout_preserves_unicode_symbols_and_line_breaks() {
         let _guard = test_guard();
         assert_eq!(
@@ -823,12 +832,14 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "changes Windows keyboard layouts; requires the disposable hosted fixture"]
     fn native_layout_rejects_unsupported_source_letters() {
         let _guard = test_guard();
         assert_eq!(convert_native("helloЖ", "00000409", "00000407"), None);
     }
 
     #[test]
+    #[ignore = "changes Windows keyboard layouts; requires the disposable hosted fixture"]
     fn native_layout_does_not_turn_altgr_into_control_characters() {
         let _guard = test_guard();
         assert_eq!(convert_native("ą", "00000415", "00000409"), None);

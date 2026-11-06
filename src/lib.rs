@@ -13,6 +13,9 @@
 
 pub use rust_switcher_core as core;
 
+#[cfg(all(test, windows))]
+mod keyboard_test_fixture;
+
 #[cfg(windows)]
 #[path = "platform/win/layout_library.rs"]
 mod layout_library;

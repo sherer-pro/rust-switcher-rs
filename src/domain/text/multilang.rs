@@ -312,6 +312,7 @@ mod tests {
     use super::*;
 
     fn test_layouts() -> [LayoutId; 2] {
+        crate::keyboard_test_fixture::require_hosted_keyboard_fixture();
         let en = unsafe { LoadKeyboardLayoutW(w!("00000409"), KLF_NOTELLSHELL) }.unwrap();
         let ru = unsafe { LoadKeyboardLayoutW(w!("00000419"), KLF_NOTELLSHELL) }.unwrap();
         assert_ne!(en, HKL::default());

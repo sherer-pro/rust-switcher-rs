@@ -21,6 +21,7 @@ struct Catalog {
 }
 
 fn catalog() -> Catalog {
+    crate::keyboard_test_fixture::require_hosted_keyboard_fixture();
     // Capture availability before resolving handles. A successful native lookup
     // alone must not make an absent layout eligible for these integration tests.
     let installed = layouts::installed_layouts();

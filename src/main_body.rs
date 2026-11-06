@@ -12,6 +12,8 @@ mod domain;
 mod input;
 #[cfg(windows)]
 mod input_journal;
+#[cfg(all(test, windows))]
+mod keyboard_test_fixture;
 #[cfg(windows)]
 #[path = "platform/win/layout_library.rs"]
 mod layout_library;

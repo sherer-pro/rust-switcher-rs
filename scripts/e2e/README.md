@@ -151,6 +151,13 @@ guarded test adds and removes Swedish after the provider starts and verifies
 that a removed layout cannot remain a target through its cached table. Ordinary
 developer test runs do not require changing the user's installed language list.
 
+Tests that call `LoadKeyboardLayoutW` are ignored by ordinary `cargo test` runs.
+Their shared guard also refuses explicit `--ignored` or `--include-ignored`
+execution outside an opted-in GitHub-hosted Windows job, before loading any
+layout. The required `windows-full` and Windows Input Regression jobs explicitly
+run the native input, decoder, and conversion cases against the disposable
+fixture. Never spoof these environment variables on a working desktop.
+
 The public-provider gate also compares the pure keyboard-table interpreter with
 the native `ToUnicodeEx` API across all seven layouts: 49 printable key positions
 and eight Shift/Caps Lock/AltGr states give 2,744 initial combinations. Every

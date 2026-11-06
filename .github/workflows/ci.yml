@@ -136,6 +136,18 @@ jobs:
         run: |
           cargo +nightly test --workspace --all-features --all-targets --locked
           if ($LASTEXITCODE -ne 0) { throw 'Release-mode unit test isolation failed' }
+      - name: Verify hosted keyboard decoding and conversion
+        if: ${{ !cancelled() && steps.layout_fixture.outcome == 'success' }}
+        shell: pwsh
+        env:
+          RUST_SWITCHER_HOSTED_E2E: '1'
+        run: |
+          cargo +nightly test --locked native_input_ -- --ignored --test-threads=1
+          if ($LASTEXITCODE -ne 0) { throw 'Native input regressions failed' }
+          cargo +nightly test --locked native_decoder_ -- --ignored --test-threads=1
+          if ($LASTEXITCODE -ne 0) { throw 'Native decoder regressions failed' }
+          cargo +nightly test --locked native_layout_ -- --ignored --test-threads=1
+          if ($LASTEXITCODE -ne 0) { throw 'Native conversion regressions failed' }
       - name: Verify multilingual planning
         if: ${{ !cancelled() && steps.layout_fixture.outcome == 'success' }}
         shell: pwsh

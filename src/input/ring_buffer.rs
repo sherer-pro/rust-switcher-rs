@@ -1510,8 +1510,9 @@ mod tests {
     }
 
     fn load_native_test_layout(name: PCWSTR) -> HKL {
+        crate::keyboard_test_fixture::require_hosted_keyboard_fixture();
         let _guard = test_guard();
-        // No activation flag: decoding uses this explicit layout without requiring foreground focus.
+        // Even without KLF_ACTIVATE, loading a layout can change the user's catalog.
         let layout = unsafe { LoadKeyboardLayoutW(name, Default::default()) }
             .expect("the native test keyboard layout must load");
         // Match startup preparation before the hook is installed. No keystroke
@@ -1638,6 +1639,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "changes Windows keyboard layouts; requires the disposable hosted fixture"]
     fn native_input_unmapped_altgr_keeps_dead_key_and_complete_prefix() {
         let layout = load_native_test_layout(w!("00000407"));
         let _guard = test_guard();
@@ -1728,30 +1730,35 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "changes Windows keyboard layouts; requires the disposable hosted fixture"]
     fn native_input_first_english_letter_survives_stale_shortcut_state() {
         let layout = load_native_test_layout(w!("00000409"));
         assert_native_character_ignores_stale_shortcuts(layout, VIRTUAL_KEY(u16::from(b'G')), "g");
     }
 
     #[test]
+    #[ignore = "changes Windows keyboard layouts; requires the disposable hosted fixture"]
     fn native_input_first_russian_letter_survives_stale_shortcut_state() {
         let layout = load_native_test_layout(w!("00000419"));
         assert_native_character_ignores_stale_shortcuts(layout, VIRTUAL_KEY(u16::from(b'G')), "п");
     }
 
     #[test]
+    #[ignore = "changes Windows keyboard layouts; requires the disposable hosted fixture"]
     fn native_input_first_english_dot_survives_stale_shortcut_state() {
         let layout = load_native_test_layout(w!("00000409"));
         assert_native_character_ignores_stale_shortcuts(layout, VK_OEM_PERIOD, ".");
     }
 
     #[test]
+    #[ignore = "changes Windows keyboard layouts; requires the disposable hosted fixture"]
     fn native_input_first_russian_dot_survives_stale_shortcut_state() {
         let layout = load_native_test_layout(w!("00000419"));
         assert_native_character_ignores_stale_shortcuts(layout, VK_OEM_2, ".");
     }
 
     #[test]
+    #[ignore = "changes Windows keyboard layouts; requires the disposable hosted fixture"]
     fn native_input_first_stale_snapshot_does_not_shorten_the_journal_sequence() {
         let sequences: [(PCWSTR, LayoutTag, &[u16], &str); 4] = [
             (
@@ -1816,6 +1823,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "changes Windows keyboard layouts; requires the disposable hosted fixture"]
     fn native_input_letter_case_follows_physical_shift_and_caps_lock() {
         for (name, lowercase, uppercase) in [(w!("00000409"), "g", "G"), (w!("00000419"), "п", "П")]
         {

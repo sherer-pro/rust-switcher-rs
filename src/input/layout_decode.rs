@@ -497,6 +497,7 @@ mod tests {
     use super::*;
 
     fn german_layout() -> usize {
+        crate::keyboard_test_fixture::require_hosted_keyboard_fixture();
         unsafe { LoadKeyboardLayoutW(w!("00000407"), KLF_NOTELLSHELL) }
             .expect("German layout must be available on the Windows runner")
             .0 as usize
@@ -565,6 +566,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "changes Windows keyboard layouts; requires the disposable hosted fixture"]
     fn native_decoder_composes_dead_key_on_its_own_thread() {
         let _guard = crate::input::ring_buffer::test_guard();
         let decoder = Decoder::start().unwrap();
@@ -581,6 +583,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "changes Windows keyboard layouts; requires the disposable hosted fixture"]
     fn native_decoder_discards_pending_accent_when_focus_changes() {
         let _guard = crate::input::ring_buffer::test_guard();
         let decoder = Decoder::start().unwrap();
@@ -597,6 +600,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "changes Windows keyboard layouts; requires the disposable hosted fixture"]
     fn native_decoder_discards_pending_accent_after_invalidation() {
         let _guard = crate::input::ring_buffer::test_guard();
         let decoder = Decoder::start().unwrap();
@@ -614,6 +618,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "changes Windows keyboard layouts; requires the disposable hosted fixture"]
     fn native_decoder_keeps_altgr_text() {
         let _guard = crate::input::ring_buffer::test_guard();
         let decoder = Decoder::start().unwrap();
@@ -630,6 +635,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "changes Windows keyboard layouts; requires the disposable hosted fixture"]
     fn native_decoder_workers_keep_independent_pending_accents() {
         let _guard = crate::input::ring_buffer::test_guard();
         let first = Decoder::start().unwrap();
@@ -652,6 +658,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "changes Windows keyboard layouts; requires the disposable hosted fixture"]
     fn native_decoder_does_not_consume_callers_pending_dead_key() {
         // Native ToUnicodeEx state is shared with the first-glyph oracle. The
         // actual decoder below still has its own independent private state.
@@ -679,6 +686,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "changes Windows keyboard layouts; requires the disposable hosted fixture"]
     fn native_decoder_unknown_layout_fails_closed_until_prepared() {
         let _guard = crate::input::ring_buffer::test_guard();
         let german = german_layout();
@@ -697,6 +705,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "changes Windows keyboard layouts; requires the disposable hosted fixture"]
     fn native_decoder_preparing_another_layout_preserves_pending_composition() {
         let _guard = crate::input::ring_buffer::test_guard();
         let decoder = Decoder::start().unwrap();

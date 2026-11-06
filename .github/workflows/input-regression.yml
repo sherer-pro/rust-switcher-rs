@@ -33,20 +33,29 @@ jobs:
         run: |
           cargo +nightly test --lib native_layout_library_ --locked -- --nocapture --test-threads=1
           if ($LASTEXITCODE -ne 0) { throw 'Native keyboard table loading failed' }
+      - name: Prepare disposable hosted keyboard fixture
+        shell: pwsh
+        env:
+          RUST_SWITCHER_HOSTED_E2E: '1'
+        run: ./scripts/e2e/initialize-layouts.ps1 -Mode All
       - name: Decode first characters through native Windows APIs
         shell: pwsh
+        env:
+          RUST_SWITCHER_HOSTED_E2E: '1'
         run: |
           $tests = @(cargo +nightly test --locked --bin rust-switcher native_input_ -- --list)
           if ($LASTEXITCODE -ne 0) { throw 'Could not enumerate native input tests' }
           if (@($tests | Where-Object { $_ -match '::native_input_.*: test$' }).Count -lt 8) {
             throw 'The native input regression tests were not discovered'
           }
-          cargo +nightly test --locked --bin rust-switcher native_input_ -- --nocapture --test-threads=1
+          cargo +nightly test --locked --bin rust-switcher native_input_ -- --include-ignored --nocapture --test-threads=1
           if ($LASTEXITCODE -ne 0) { throw 'Native input regression tests failed' }
       - name: Decode dead keys without consuming another editor's pending accent
         shell: pwsh
+        env:
+          RUST_SWITCHER_HOSTED_E2E: '1'
         run: |
-          cargo +nightly test --lib native_decoder_ --locked -- --nocapture --test-threads=1
+          cargo +nightly test --lib native_decoder_ --locked -- --include-ignored --nocapture --test-threads=1
           if ($LASTEXITCODE -ne 0) { throw 'Native composition isolation regression failed' }
       - name: Keep the first glyph across caret recreation and isolate focus changes
         shell: pwsh

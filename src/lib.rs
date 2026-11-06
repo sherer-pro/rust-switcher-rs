@@ -13,6 +13,16 @@
 
 pub use rust_switcher_core as core;
 
+#[cfg(all(test, windows))]
+mod keyboard_test_fixture;
+
+#[cfg(windows)]
+#[path = "platform/win/layout_library.rs"]
+mod layout_library;
+#[cfg(windows)]
+#[path = "input/layout_tables.rs"]
+mod layout_tables;
+
 // Compatibility shim for existing unit tests that still refer to
 // `crate::domain::text::mapping::*`.
 pub mod domain {
@@ -34,3 +44,8 @@ pub mod input {
 
 #[cfg(test)]
 mod core_tests;
+
+// Exercise the real model and cache fixtures in the cross-platform test jobs.
+#[cfg(test)]
+#[path = "domain/text/ranking.rs"]
+mod ranking;

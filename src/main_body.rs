@@ -12,6 +12,14 @@ mod domain;
 mod input;
 #[cfg(windows)]
 mod input_journal;
+#[cfg(all(test, windows))]
+mod keyboard_test_fixture;
+#[cfg(windows)]
+#[path = "platform/win/layout_library.rs"]
+mod layout_library;
+#[cfg(windows)]
+#[path = "input/layout_tables.rs"]
+mod layout_tables;
 #[cfg(windows)]
 mod platform;
 #[cfg(windows)]
@@ -19,6 +27,11 @@ mod utils;
 
 #[cfg(windows)]
 fn main() -> windows::core::Result<()> {
+    if std::env::args().any(|arg| arg == "--quit-for-update") {
+        let _ = platform::win::request_running_instance_exit();
+        return Ok(());
+    }
+
     utils::tracing::init_tracing();
     utils::helpers::init_app_user_model_id()?;
 

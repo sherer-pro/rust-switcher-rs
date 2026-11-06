@@ -31,3 +31,7 @@ target
 graphify-out/
 graphify-out.next/
 /app.zip
+
+# Local Python policy test caches
+__pycache__/
+*.py[cod]

@@ -9,11 +9,13 @@ mod autostart;
 mod commands;
 pub(crate) mod hotkey_format;
 pub(crate) mod keyboard;
+pub(crate) mod layouts;
 pub(crate) mod menu_theme;
 pub(crate) mod mouse;
 pub mod state;
 pub(crate) mod tray;
 mod tray_dispatch;
+mod updater;
 mod visuals;
 mod window;
 mod winutil;
@@ -28,7 +30,7 @@ use windows::{
         UI::{
             Input::KeyboardAndMouse::SetFocus,
             WindowsAndMessaging::{
-                DefWindowProcW, FindWindowW, GWLP_USERDATA, GetWindowLongPtrW, IsWindow,
+                DefWindowProcW, DestroyWindow, FindWindowW, GWLP_USERDATA, GetWindowLongPtrW, IsWindow,
                 IsWindowVisible, KillTimer, PostMessageW, PostQuitMessage, RegisterWindowMessageW,
                 SC_CLOSE, SC_MINIMIZE, SIZE_MINIMIZED, SW_HIDE, SW_RESTORE, SW_SHOWNORMAL,
                 SetForegroundWindow, SetTimer, SetWindowLongPtrW, ShowWindow, WM_APP, WM_CLOSE,
@@ -74,6 +76,7 @@ use crate::{
 
 const WM_APP_APPLY_THEME: u32 = WM_APP + 1;
 const WM_APP_RUN_RUNTIME_COMMAND: u32 = WM_APP + 2;
+const WM_APP_EXIT_FOR_UPDATE: u32 = WM_APP + 0x222;
 const PLAYGROUND_HIDE_TIMER_ID: usize = 0x5300;
 const PLAYGROUND_VISIBLE_MS: u32 = 5 * 60 * 1000;
 
@@ -298,8 +301,7 @@ fn read_ui_to_config(state: &AppState, mut cfg: config::Config) -> config::Confi
     cfg.start_minimized = helpers::get_checkbox(state.checkboxes.start_minimized);
     cfg.theme_dark = helpers::get_checkbox(state.checkboxes.theme_dark);
     cfg.smarter_hotkeys_enabled = helpers::get_checkbox(state.checkboxes.smarter_hotkeys);
-    cfg.autoconvert_feature_enabled =
-        helpers::get_checkbox(state.checkboxes.autoconvert_feature);
+    cfg.autoconvert_feature_enabled = helpers::get_checkbox(state.checkboxes.autoconvert_feature);
 
     cfg.hotkey_convert_last_word_sequence = state.hotkey_sequence_values.last_word;
     cfg.hotkey_convert_last_sequence_sequence = state.hotkey_sequence_values.last_sequence;
@@ -692,6 +694,11 @@ pub extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
             let _ = unsafe { ShowWindow(hwnd, SW_HIDE) };
             LRESULT(0)
         }
+        WM_APP_EXIT_FOR_UPDATE => {
+            tray::remove_icon(hwnd);
+            let _ = unsafe { DestroyWindow(hwnd) };
+            LRESULT(0)
+        }
         WM_DESTROY => {
             unsafe { PostQuitMessage(0) };
             LRESULT(0)
@@ -858,6 +865,20 @@ fn show_window_message_id() -> u32 {
             .collect();
         unsafe { RegisterWindowMessageW(PCWSTR(name.as_ptr())) }
     })
+}
+
+pub fn request_running_instance_exit() -> windows::core::Result<bool> {
+    let class_name: Vec<u16> = app_identity::MAIN_WINDOW_CLASS
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    let hwnd = unsafe { FindWindowW(PCWSTR(class_name.as_ptr()), PCWSTR::null()) }
+        .unwrap_or_default();
+    if hwnd.0.is_null() {
+        return Ok(false);
+    }
+    unsafe { PostMessageW(Some(hwnd), WM_APP_EXIT_FOR_UPDATE, WPARAM(0), LPARAM(0))? };
+    Ok(true)
 }
 
 pub fn activate_running_instance() -> windows::core::Result<bool> {
@@ -1098,9 +1119,9 @@ fn on_timer(hwnd: HWND, wparam: WPARAM, _lparam: LPARAM) -> LRESULT {
 
     if wparam.0 == crate::platform::win::keyboard::sequence::DEFERRED_SEQUENCE_TIMER_ID {
         with_state_mut_do(hwnd, |state| {
-            if let Err(e) =
-                crate::platform::win::keyboard::sequence::handle_deferred_sequence_timer(hwnd, state)
-            {
+            if let Err(e) = crate::platform::win::keyboard::sequence::handle_deferred_sequence_timer(
+                hwnd, state,
+            ) {
                 crate::platform::ui::error_notifier::push(
                     hwnd,
                     state,

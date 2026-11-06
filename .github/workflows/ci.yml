@@ -23,14 +23,23 @@ jobs:
         with:
           persist-credentials: false
       - name: Install Rust toolchain (nightly)
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
           toolchain: nightly
           components: rustfmt
       - name: Rust cache
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Cargo fmt
         run: cargo +nightly fmt --all -- --check
+      - name: Verify locked dependency graph
+        shell: bash
+        run: |
+          if ! cargo +nightly metadata --locked --format-version 1 > /dev/null; then
+            cargo +nightly update --workspace
+            git diff -- Cargo.lock
+            echo 'Commit the reviewed lockfile update before merging.' >&2
+            exit 1
+          fi
 
   clippy-lib-tests:
     name: clippy-lib-tests
@@ -41,12 +50,12 @@ jobs:
         with:
           persist-credentials: false
       - name: Install Rust toolchain (nightly)
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
           toolchain: nightly
           components: clippy
       - name: Rust cache
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Cargo clippy (core lib/tests only)
         run: cargo +nightly clippy --lib --tests -- -D warnings
 
@@ -59,13 +68,13 @@ jobs:
         with:
           persist-credentials: false
       - name: Install Rust toolchain (nightly)
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
           toolchain: nightly
       - name: Rust cache
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@9534c84618278caac52cb373bb164ed464dbd8af # v2.87.11
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         with:
           tool: cargo-nextest
           fallback: none
@@ -74,32 +83,157 @@ jobs:
 
   windows-full:
     name: windows-full
-    runs-on: windows-latest
+    runs-on: windows-2025
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install Rust toolchain (nightly)
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
           toolchain: nightly
           components: rustfmt, clippy
       - name: Rust cache
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Cargo fmt --check
         run: cargo +nightly fmt --check
+      - name: Validate Windows updater PowerShell syntax
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $parseErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path scripts/windows-updater.ps1), [ref]$tokens, [ref]$parseErrors
+          ) | Out-Null
+          if ($parseErrors) { throw ($parseErrors | Out-String) }
       - name: Cargo clippy
         run: cargo +nightly clippy --all-targets --all-features -- -D warnings
       - name: Cargo build (debug-tracing)
+        id: app_build
         run: cargo +nightly build --features debug-tracing
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@9534c84618278caac52cb373bb164ed464dbd8af # v2.87.11
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         with:
           tool: cargo-nextest
           fallback: none
+      - name: Prepare installed-layout fixture
+        id: layout_fixture
+        shell: pwsh
+        env:
+          RUST_SWITCHER_HOSTED_E2E: '1'
+        run: ./scripts/e2e/initialize-layouts.ps1 -Mode All
       - name: Cargo nextest --locked
-        run: cargo +nightly nextest run --locked
+        env:
+          RUST_SWITCHER_HOSTED_E2E: '1'
+        run: |
+          cargo +nightly nextest run --locked --no-fail-fast
+          if ($LASTEXITCODE -ne 0) { throw 'Windows unit tests failed' }
+      - name: Verify the release workflow's parallel test mode
+        if: ${{ !cancelled() && steps.app_build.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          cargo +nightly test --workspace --all-features --all-targets --locked
+          if ($LASTEXITCODE -ne 0) { throw 'Release-mode unit test isolation failed' }
+      - name: Verify hosted keyboard decoding and conversion
+        if: ${{ !cancelled() && steps.layout_fixture.outcome == 'success' }}
+        shell: pwsh
+        env:
+          RUST_SWITCHER_HOSTED_E2E: '1'
+        run: |
+          cargo +nightly test --locked native_input_ -- --ignored --test-threads=1
+          if ($LASTEXITCODE -ne 0) { throw 'Native input regressions failed' }
+          cargo +nightly test --locked native_decoder_ -- --ignored --test-threads=1
+          if ($LASTEXITCODE -ne 0) { throw 'Native decoder regressions failed' }
+          cargo +nightly test --locked native_layout_ -- --ignored --test-threads=1
+          if ($LASTEXITCODE -ne 0) { throw 'Native conversion regressions failed' }
+      - name: Verify multilingual planning
+        if: ${{ !cancelled() && steps.layout_fixture.outcome == 'success' }}
+        shell: pwsh
+        env:
+          RUST_SWITCHER_HOSTED_E2E: '1'
+        run: |
+          cargo +nightly test --locked --bin rust-switcher native_planner_ -- --ignored --test-threads=1
+          if ($LASTEXITCODE -ne 0) { throw 'Multilingual planning regressions failed' }
+      - name: Compare native tables and live keyboard catalog changes
+        if: ${{ !cancelled() && steps.layout_fixture.outcome == 'success' }}
+        shell: pwsh
+        env:
+          RUST_SWITCHER_HOSTED_E2E: '1'
+        run: |
+          cargo +nightly test --locked --bin rust-switcher native_public_layout_ -- --ignored --test-threads=1
+          if ($LASTEXITCODE -ne 0) { throw 'Native keyboard tables/catalog regressions failed' }
+      - name: Prepare English and Russian desktop fixtures
+        shell: pwsh
+        env:
+          RUST_SWITCHER_HOSTED_E2E: '1'
+        run: ./scripts/e2e/initialize-layouts.ps1 -Mode Pair
+      - name: Build desktop test and release applications
+        shell: pwsh
+        run: |
+          cargo +nightly build --locked --bin rust-switcher-debug --features debug-tracing,debug-binary
+          if ($LASTEXITCODE -ne 0) { throw 'Debug build failed' }
+          cargo +nightly build --release --locked --bin rust-switcher
+          if ($LASTEXITCODE -ne 0) { throw 'Release build failed' }
+      - name: Exercise actual applications in the isolated desktop
+        timeout-minutes: 5
+        shell: pwsh
+        env:
+          RUST_SWITCHER_HOSTED_E2E: '1'
+        run: ./scripts/e2e/run-hosted.ps1 -DebugExe ./target/debug/rust-switcher-debug.exe -ReleaseExe ./target/release/rust-switcher.exe
+
+      - name: Verify Double Alt in real browser fields
+        timeout-minutes: 8
+        shell: pwsh
+        env:
+          RUST_SWITCHER_HOSTED_E2E: '1'
+        run: ./scripts/e2e/run-browser.ps1 -DebugExe ./target/debug/rust-switcher-debug.exe
+
+      - name: Verify real crate packaging and tokenless publisher preflight
+        shell: pwsh
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          cargo +nightly package --workspace --locked
+          if ($LASTEXITCODE -ne 0) { throw 'Verified workspace packaging failed' }
+          $version = python -c "import tomllib; print(tomllib.load(open('Cargo.toml','rb'))['package']['version'])"
+          if ($LASTEXITCODE -ne 0) { throw 'Could not read package version' }
+          python .github/scripts/release_stages.py bundle --source "$env:SOURCE_SHA" --commit "$env:SOURCE_SHA" --version "$version" --directory "$env:RUNNER_TEMP/ci-publication"
+          if ($LASTEXITCODE -ne 0) { throw 'Publication bundle validation failed' }
+          $manifestSha = (Get-FileHash -Algorithm SHA256 "$env:RUNNER_TEMP/ci-publication/manifest.json").Hash.ToLowerInvariant()
+          python .github/scripts/release_stages.py preflight --source "$env:SOURCE_SHA" --commit "$env:SOURCE_SHA" --version "$version" --directory "$env:RUNNER_TEMP/ci-publication" --manifest-sha "$manifestSha" --sterile "$env:RUNNER_TEMP/ci-publish-cargo"
+          if ($LASTEXITCODE -ne 0) { throw 'Tokenless publication preflight failed' }
+
+      - name: Verify native model download and offline cache
+        if: ${{ !cancelled() && steps.app_build.outcome == 'success' }}
+        shell: pwsh
+        env:
+          RUST_SWITCHER_HOSTED_E2E: '1'
+        run: |
+          cargo +nightly test --lib ranking::model_cache::tests::hosted_native_model_download_verifies_cache_and_reuses_it_offline --locked -- --ignored --exact --test-threads=1
+          if ($LASTEXITCODE -ne 0) { throw 'Native model download/cache regression failed' }
+
+  updater-live:
+    name: updater-live
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: nightly
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Build native release executable
+        run: cargo +nightly build --release --locked --bin rust-switcher
+      - name: Live upgrade from running binary and no-op behavior
+        shell: pwsh
+        run: ./scripts/e2e/updater-live.ps1 -Application rust-switcher
 
   dependency-security:
     name: dependency-security
@@ -110,7 +244,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install dependency tooling
-        uses: taiki-e/install-action@9534c84618278caac52cb373bb164ed464dbd8af # v2.87.11
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         with:
           tool: |
             cargo-audit@0.22.2
@@ -123,3 +257,25 @@ jobs:
         run: cargo deny check advisories bans sources
       - name: Check unused dependencies
         run: cargo machete
+
+  ci-gate:
+    if: always()
+    needs: [fmt, clippy-lib-tests, test-lib-tests, windows-full, updater-live, dependency-security]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require every build and test job to succeed
+        env:
+          RESULT_0: ${{ needs.fmt.result }}
+          RESULT_1: ${{ needs.clippy-lib-tests.result }}
+          RESULT_2: ${{ needs.test-lib-tests.result }}
+          RESULT_3: ${{ needs.windows-full.result }}
+          RESULT_4: ${{ needs.dependency-security.result }}
+          RESULT_5: ${{ needs.updater-live.result }}
+        run: |
+          test "$RESULT_0" = success
+          test "$RESULT_1" = success
+          test "$RESULT_2" = success
+          test "$RESULT_3" = success
+          test "$RESULT_4" = success
+          test "$RESULT_5" = success

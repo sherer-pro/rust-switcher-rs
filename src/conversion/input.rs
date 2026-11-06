@@ -18,58 +18,13 @@ const VK_RIGHT_KEY: VIRTUAL_KEY = VIRTUAL_KEY(0x27);
 /// Used as a selection modifier.
 const VK_SHIFT_KEY: VIRTUAL_KEY = VIRTUAL_KEY(0x10);
 
-/// A small RAII helper that tracks pressed keys and releases them on drop.
-///
-/// Intended for modifier keys (Ctrl, Shift, Alt). If `down` succeeds, the key is
-/// recorded and will be released in reverse order when the sequence is dropped.
-pub struct KeySequence {
-    pressed: Vec<VIRTUAL_KEY>,
-}
-
-impl KeySequence {
-    /// Creates an empty key sequence.
-    pub fn new() -> Self {
-        Self {
-            pressed: Vec::new(),
-        }
-    }
-
-    /// Sends a key down event and records the key for automatic release.
-    ///
-    /// Returns `true` if the event was successfully sent.
-    pub fn down(&mut self, vk: VIRTUAL_KEY) -> bool {
-        send_key(vk, false).then(|| self.pressed.push(vk)).is_some()
-    }
-
-    /// Taps a key (down then up).
-    ///
-    /// Returns `true` if both events were successfully sent.
-    pub fn tap(vk: VIRTUAL_KEY) -> bool {
-        send_key(vk, false) && send_key(vk, true)
-    }
-}
-
-impl Default for KeySequence {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Drop for KeySequence {
-    fn drop(&mut self) {
-        for vk in self.pressed.drain(..).rev() {
-            let _ = send_key(vk, true);
-        }
-    }
-}
-
 /// Sends a Unicode string using `KEYEVENTF_UNICODE` keyboard input.
 ///
 /// Notes:
 /// - The Windows API consumes UTF-16 code units. Supplementary characters are sent
 ///   as surrogate pairs (two units), which is expected for `KEYEVENTF_UNICODE`.
 /// - Returns `true` if all input events were successfully sent.
-pub fn send_text_unicode(text: &str) -> bool {
+fn unicode_events(text: &str) -> Vec<INPUT> {
     use windows::Win32::UI::Input::KeyboardAndMouse::KEYEVENTF_UNICODE;
 
     fn unicode_input(unit: u16, key_up: bool) -> INPUT {
@@ -85,67 +40,26 @@ pub fn send_text_unicode(text: &str) -> bool {
                         KEYEVENTF_UNICODE
                     },
                     time: 0,
-                    dwExtraInfo: 0,
+                    dwExtraInfo: crate::platform::win::keyboard::OWN_INPUT_MARKER,
                 },
             },
         }
     }
 
     let units: Vec<u16> = text.encode_utf16().collect();
-    if units.is_empty() {
-        return true;
-    }
-
-    let inputs: Vec<INPUT> = units
+    units
         .into_iter()
         .flat_map(|u| [unicode_input(u, false), unicode_input(u, true)])
-        .collect();
-
-    let Some(input_size) = input_struct_size_i32() else {
-        return false;
-    };
-
-    let sent = unsafe { SendInput(&inputs, input_size) } as usize;
-    sent == inputs.len()
-}
-
-/// Reselects the last inserted text by moving the caret left and selecting right.
-///
-/// `units` is the number of UTF-16 code units to reselect. This matches the unit
-/// count produced by `str::encode_utf16()`.
-///
-/// Behavior:
-/// - Move caret left `units` times
-/// - Hold Shift
-/// - Move caret right `units` times (selecting the range)
-///
-/// The selection length is capped to avoid excessive key events.
-pub fn reselect_last_inserted_text_utf16_units(units: usize) -> bool {
-    const MAX_UNITS: usize = 4096;
-
-    if units == 0 {
-        return true;
-    }
-
-    let units = units.min(MAX_UNITS);
-    let mut seq = KeySequence::new();
-
-    (0..units).all(|_| KeySequence::tap(VK_LEFT_KEY))
-        && seq.down(VK_SHIFT_KEY)
-        && (0..units).all(|_| KeySequence::tap(VK_RIGHT_KEY))
+        .collect()
 }
 
 fn input_struct_size_i32() -> Option<i32> {
     i32::try_from(std::mem::size_of::<INPUT>()).ok()
 }
 
-/// Sends a single virtual key event via `SendInput`.
-///
-/// `key_up = false` sends key down, `key_up = true` sends key up.
-///
-/// Returns `true` if `SendInput` reports that at least one event was inserted.
-fn send_key(vk: VIRTUAL_KEY, key_up: bool) -> bool {
-    let input = INPUT {
+/// Constructs one virtual key event for a later input batch.
+fn key_event(vk: VIRTUAL_KEY, key_up: bool) -> INPUT {
+    INPUT {
         r#type: INPUT_KEYBOARD,
         Anonymous: INPUT_0 {
             ki: KEYBDINPUT {
@@ -157,10 +71,14 @@ fn send_key(vk: VIRTUAL_KEY, key_up: bool) -> bool {
                     KEYBD_EVENT_FLAGS::default()
                 },
                 time: 0,
-                dwExtraInfo: 0,
+                dwExtraInfo: crate::platform::win::keyboard::OWN_INPUT_MARKER,
             },
         },
-    };
+    }
+}
+
+fn send_key(vk: VIRTUAL_KEY, key_up: bool) -> bool {
+    let input = key_event(vk, key_up);
 
     let Some(input_size) = input_struct_size_i32() else {
         return false;
@@ -168,4 +86,110 @@ fn send_key(vk: VIRTUAL_KEY, key_up: bool) -> bool {
 
     let sent = unsafe { SendInput(&[input], input_size) };
     usize::try_from(sent).is_ok_and(|n| n != 0)
+}
+
+/// Submit replacement as a single ordered input batch after a final target check.
+/// Windows does not interleave other keyboard/mouse input with this batch.
+pub fn replace_selection_unicode(text: &str, target_is_current: impl FnOnce() -> bool) -> bool {
+    let units = text.encode_utf16().count();
+    if units == 0 || units > 4096 {
+        return false;
+    }
+    let delete = VIRTUAL_KEY(0x2E);
+    let mut inputs = vec![key_event(delete, false), key_event(delete, true)];
+    inputs.extend(unicode_events(text));
+    for _ in 0..units {
+        inputs.extend([key_event(VK_LEFT_KEY, false), key_event(VK_LEFT_KEY, true)]);
+    }
+    let shift_index = inputs.len();
+    inputs.push(key_event(VK_SHIFT_KEY, false));
+    for _ in 0..units {
+        inputs.extend([
+            key_event(VK_RIGHT_KEY, false),
+            key_event(VK_RIGHT_KEY, true),
+        ]);
+    }
+    inputs.push(key_event(VK_SHIFT_KEY, true));
+    let Some(size) = input_struct_size_i32() else {
+        return false;
+    };
+    if !target_is_current() {
+        return false;
+    }
+    let sent = unsafe { SendInput(&inputs, size) } as usize;
+    if sent > shift_index && sent < inputs.len() {
+        let _ = send_key(VK_SHIFT_KEY, true);
+    }
+    sent == inputs.len()
+}
+
+/// Replace the journal's suffix in one input batch. Physical input cannot be
+/// interleaved between individual Backspace events and the replacement text.
+pub fn replace_before_caret(
+    core_len: usize,
+    suffix_len: usize,
+    suffix_spaces_only: bool,
+    suffix_text: &str,
+    converted: &str,
+    target_is_current: impl FnOnce() -> bool,
+) -> bool {
+    const MAX_CHARS: usize = 4096;
+    if core_len == 0
+        || core_len.saturating_add(suffix_len) > MAX_CHARS
+        || converted
+            .encode_utf16()
+            .count()
+            .saturating_add(suffix_text.encode_utf16().count())
+            > MAX_CHARS
+    {
+        return false;
+    }
+    let mut inputs = Vec::new();
+    let append_taps = |inputs: &mut Vec<INPUT>, vk: VIRTUAL_KEY, count: usize| {
+        for _ in 0..count {
+            inputs.extend([key_event(vk, false), key_event(vk, true)]);
+        }
+    };
+    if suffix_spaces_only {
+        append_taps(&mut inputs, VK_LEFT_KEY, suffix_len);
+        append_taps(&mut inputs, VIRTUAL_KEY(0x08), core_len);
+        inputs.extend(unicode_events(converted));
+        append_taps(&mut inputs, VK_RIGHT_KEY, suffix_len);
+    } else {
+        append_taps(&mut inputs, VIRTUAL_KEY(0x08), core_len + suffix_len);
+        inputs.extend(unicode_events(converted));
+        inputs.extend(unicode_events(suffix_text));
+    }
+    let Some(size) = input_struct_size_i32() else {
+        return false;
+    };
+    if !target_is_current() {
+        return false;
+    }
+    let sent = unsafe { SendInput(&inputs, size) } as usize;
+    sent == inputs.len()
+}
+
+#[cfg(test)]
+mod selection_tests {
+    #[test]
+    fn changed_target_cancels_before_native_input() {
+        assert!(!super::replace_selection_unicode("привет", || false));
+        assert!(!super::replace_before_caret(
+            6,
+            0,
+            false,
+            "",
+            "привет",
+            || false
+        ));
+        assert!(!super::replace_before_caret(
+            4097,
+            0,
+            false,
+            "",
+            "привет",
+            || true
+        ));
+    }
 }

@@ -166,11 +166,10 @@ by neutral probes to check remaining composition state. These guarded oracle
 calls run only in the disposable test process; production decoding uses owned
 driver tables and never calls the stateful translation API.
 
-The native model-download test calls the production WinHTTP path for a pinned
-German model, verifies its size and SHA-256, and then proves that the temporary
-cache loads without another download. The other model tests use published model
-fixtures locally, including integrity checks for all 75 catalog entries. These
-fixtures are development dependencies; release builds bundle only EN/RU models.
+Model tests use published model fixtures locally, including integrity checks for
+all 75 catalog entries. They verify read-only cache loading and rejection of
+missing, truncated, or corrupt files. These fixtures are development dependencies;
+release builds bundle only EN/RU models. Runtime downloads and the updater are removed.
 
 ## Existing Windows Sandbox scenario
 

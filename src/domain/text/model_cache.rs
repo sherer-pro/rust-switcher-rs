@@ -1,14 +1,12 @@
-//! Lazy, verified model cache. Ranking never waits for network I/O.
-//!
-//! A single bounded worker handles missing models; requests are deduplicated by
-//! language and failed requests have a retry cooldown. Only fixed, immutable
-//! model URLs are contacted. Input text never enters this module.
+//! Lazy, verified, read-only model cache. No network I/O or runtime downloads.
+//! EN/RU are bundled. Other languages use existing verified local model files;
+//! missing models retain the conversion planner's existing fallback.
 
 use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
-    fs::{self, File},
-    io::{self, Read, Write},
+    fs::File,
+    io::{self, Read},
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex, OnceLock,
@@ -24,80 +22,7 @@ use sha2::{Digest, Sha256};
 use super::model_catalog::{MAX_MODEL_BYTES, MODELS, ModelSpec};
 
 pub(super) type ProbabilityModel = Map<Cow<'static, [u8]>>;
-
 const RETRY_DELAY: Duration = Duration::from_secs(5 * 60);
-
-#[cfg(any(windows, test))]
-const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(45);
-#[cfg(any(windows, test))]
-const MIN_RETRY_BUDGET: Duration = Duration::from_secs(10);
-
-#[cfg(any(windows, test))]
-enum DownloadFailure {
-    ResponseTimeout(io::Error),
-    Other(io::Error),
-}
-
-#[cfg(any(windows, test))]
-impl From<io::Error> for DownloadFailure {
-    fn from(error: io::Error) -> Self {
-        Self::Other(error)
-    }
-}
-
-#[cfg(any(windows, test))]
-impl DownloadFailure {
-    fn into_io(self) -> io::Error {
-        match self {
-            Self::ResponseTimeout(error) | Self::Other(error) => error,
-        }
-    }
-}
-
-// A stalled response-header wait has been observed after a successful send.
-// Retry that one failure with fresh handles, never a status or integrity error.
-// Both attempts share their original time budget, checked at API boundaries.
-// Synchronous WinHTTP phase timeouts do not provide hard wall-clock cancellation.
-#[cfg(any(windows, test))]
-fn retry_response_timeout<T>(
-    started: Instant,
-    mut attempt: impl FnMut() -> Result<T, DownloadFailure>,
-) -> io::Result<T> {
-    match attempt() {
-        Ok(value) => Ok(value),
-        Err(DownloadFailure::ResponseTimeout(error))
-            if DOWNLOAD_TIMEOUT.saturating_sub(started.elapsed()) >= MIN_RETRY_BUDGET =>
-        {
-            tracing::debug!(error = %error, "retrying model response with a fresh request");
-            #[cfg(test)]
-            let _ = writeln!(
-                io::stderr(),
-                "WinHTTP model download: retrying once after {error}"
-            );
-            attempt().map_err(DownloadFailure::into_io)
-        }
-        Err(error) => Err(error.into_io()),
-    }
-}
-
-#[cfg(any(windows, test))]
-fn download_timeouts(started: Instant) -> io::Result<[i32; 4]> {
-    let remaining_ms = DOWNLOAD_TIMEOUT
-        .saturating_sub(started.elapsed())
-        .as_millis();
-    // WinHTTP treats zero as infinite. Reserve at least one millisecond for
-    // each of the resolve/connect/send phases within WinHttpSendRequest.
-    if remaining_ms < 3 {
-        return Err(io::Error::new(
-            io::ErrorKind::TimedOut,
-            "model download exhausted its shared 45-second budget",
-        ));
-    }
-    let short = (remaining_ms / 4).clamp(1, 5_000) as i32;
-    let send = (remaining_ms - 2 * short as u128).min(10_000) as i32;
-    let receive = remaining_ms.min(10_000) as i32;
-    Ok([short, short, send, receive])
-}
 
 #[derive(Default)]
 struct CacheState {
@@ -145,7 +70,7 @@ pub(super) fn model(spec: &'static ModelSpec) -> Option<Arc<ProbabilityModel>> {
         }
     }
 
-    if downloader().is_none_or(|sender| sender.try_send(spec).is_err()) {
+    if cache_loader().is_none_or(|sender| sender.try_send(spec).is_err()) {
         let mut state = state()
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -155,7 +80,7 @@ pub(super) fn model(spec: &'static ModelSpec) -> Option<Arc<ProbabilityModel>> {
     None
 }
 
-fn downloader() -> Option<&'static SyncSender<&'static ModelSpec>> {
+fn cache_loader() -> Option<&'static SyncSender<&'static ModelSpec>> {
     static SENDER: OnceLock<Option<SyncSender<&'static ModelSpec>>> = OnceLock::new();
     SENDER
         .get_or_init(|| {
@@ -204,26 +129,13 @@ fn cache_file(spec: &ModelSpec) -> io::Result<PathBuf> {
 }
 
 fn load_external_model(spec: &ModelSpec) -> io::Result<ProbabilityModel> {
-    load_cached_or_download(&cache_file(spec)?, spec, || download_model(spec))
+    load_cached_model(&cache_file(spec)?, spec)
 }
 
-fn load_cached_or_download(
-    path: &Path,
-    spec: &ModelSpec,
-    download: impl FnOnce() -> io::Result<Vec<u8>>,
-) -> io::Result<ProbabilityModel> {
-    if let Ok(bytes) = read_verified(path, spec)
-        && let Ok(model) = Map::new(Cow::Owned(bytes))
-    {
-        return Ok(model);
-    }
-
-    let bytes = download()?;
-    verify_payload(spec, &bytes)?;
-    let model = Map::new(Cow::Owned(bytes))
-        .map_err(|_| invalid_data("model is not a valid FST probability map"))?;
-    store_verified(path, spec, model.as_fst().as_bytes())?;
-    Ok(model)
+fn load_cached_model(path: &Path, spec: &ModelSpec) -> io::Result<ProbabilityModel> {
+    let bytes = read_verified(path, spec)?;
+    Map::new(Cow::Owned(bytes))
+        .map_err(|_| invalid_data("model is not a valid FST probability map"))
 }
 
 fn read_verified(path: &Path, spec: &ModelSpec) -> io::Result<Vec<u8>> {
@@ -239,20 +151,6 @@ fn read_verified(path: &Path, spec: &ModelSpec) -> io::Result<Vec<u8>> {
         .read_to_end(&mut bytes)?;
     verify_payload(spec, &bytes)?;
     Ok(bytes)
-}
-
-fn store_verified(path: &Path, spec: &ModelSpec, bytes: &[u8]) -> io::Result<()> {
-    verify_payload(spec, bytes)?;
-    let parent = path
-        .parent()
-        .ok_or_else(|| invalid_data("model cache path has no parent"))?;
-    fs::create_dir_all(parent)?;
-    let mut file = tempfile::NamedTempFile::new_in(parent)?;
-    file.write_all(bytes)?;
-    file.flush()?;
-    file.as_file().sync_all()?;
-    file.persist(path).map_err(|error| error.error)?;
-    Ok(())
 }
 
 fn validate_size(spec: &ModelSpec) -> io::Result<()> {
@@ -275,249 +173,6 @@ fn verify_payload(spec: &ModelSpec, bytes: &[u8]) -> io::Result<()> {
 
 fn invalid_data(message: &'static str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
-}
-
-#[cfg(not(windows))]
-fn download_model(_spec: &ModelSpec) -> io::Result<Vec<u8>> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "model downloads require Windows",
-    ))
-}
-
-#[cfg(windows)]
-fn download_model(spec: &ModelSpec) -> io::Result<Vec<u8>> {
-    validate_size(spec)?;
-    let started = Instant::now();
-    retry_response_timeout(started, || download_model_attempt(spec, started))
-}
-
-#[cfg(windows)]
-fn download_model_attempt(spec: &ModelSpec, started: Instant) -> Result<Vec<u8>, DownloadFailure> {
-    use std::{ffi::c_void, ptr};
-
-    use windows::{
-        Win32::Networking::WinHttp::{
-            ERROR_WINHTTP_TIMEOUT, WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_FLAG_SECURE,
-            WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2, WINHTTP_OPTION_REDIRECT_POLICY,
-            WINHTTP_OPTION_REDIRECT_POLICY_NEVER, WINHTTP_OPTION_SECURE_PROTOCOLS,
-            WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_QUERY_STATUS_CODE, WinHttpCloseHandle,
-            WinHttpConnect, WinHttpOpen, WinHttpOpenRequest, WinHttpQueryHeaders, WinHttpReadData,
-            WinHttpReceiveResponse, WinHttpSendRequest, WinHttpSetOption, WinHttpSetTimeouts,
-        },
-        core::{PCWSTR, w},
-    };
-
-    use super::model_catalog::{MODEL_SOURCE_HOST, source_path};
-
-    struct Handle(*mut c_void);
-
-    impl Handle {
-        fn new(value: *mut c_void) -> windows::core::Result<Self> {
-            if value.is_null() {
-                Err(windows::core::Error::from_thread())
-            } else {
-                Ok(Self(value))
-            }
-        }
-    }
-
-    impl Drop for Handle {
-        fn drop(&mut self) {
-            let _ = unsafe { WinHttpCloseHandle(self.0) };
-        }
-    }
-
-    let windows_error = |operation: &str, error: windows::core::Error| {
-        let kind = if error.code() == windows::core::HRESULT::from_win32(ERROR_WINHTTP_TIMEOUT) {
-            io::ErrorKind::TimedOut
-        } else {
-            io::ErrorKind::Other
-        };
-        io::Error::new(
-            kind,
-            format!("{operation} after {:?}: {error}", started.elapsed()),
-        )
-    };
-    let set_timeouts = |handle: *mut c_void| -> io::Result<()> {
-        let [resolve, connect, send, receive] = download_timeouts(started)?;
-        unsafe { WinHttpSetTimeouts(handle, resolve, connect, send, receive) }
-            .map_err(|error| windows_error("WinHttpSetTimeouts", error))
-    };
-    let agent: Vec<u16> = concat!("RustSwitcher/", env!("CARGO_PKG_VERSION"))
-        .encode_utf16()
-        .chain(Some(0))
-        .collect();
-    let host: Vec<u16> = MODEL_SOURCE_HOST.encode_utf16().chain(Some(0)).collect();
-    let path: Vec<u16> = source_path(spec).encode_utf16().chain(Some(0)).collect();
-
-    let session = Handle::new(unsafe {
-        WinHttpOpen(
-            PCWSTR(agent.as_ptr()),
-            WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
-            PCWSTR::null(),
-            PCWSTR::null(),
-            0,
-        )
-    })
-    .map_err(|error| windows_error("WinHttpOpen", error))?;
-    #[cfg(test)]
-    install_network_diagnostics(session.0)
-        .map_err(|error| windows_error("WinHttpSetStatusCallback", error))?;
-    set_timeouts(session.0)?;
-    let protocols = WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2.to_ne_bytes();
-    unsafe {
-        WinHttpSetOption(
-            Some(session.0.cast_const()),
-            WINHTTP_OPTION_SECURE_PROTOCOLS,
-            Some(&protocols),
-        )
-    }
-    .map_err(|error| windows_error("WinHttpSetOption(TLS)", error))?;
-
-    let connection =
-        Handle::new(unsafe { WinHttpConnect(session.0, PCWSTR(host.as_ptr()), 443, 0) })
-            .map_err(|error| windows_error("WinHttpConnect", error))?;
-    let request = Handle::new(unsafe {
-        WinHttpOpenRequest(
-            connection.0,
-            w!("GET"),
-            PCWSTR(path.as_ptr()),
-            PCWSTR::null(),
-            PCWSTR::null(),
-            ptr::null(),
-            WINHTTP_FLAG_SECURE,
-        )
-    })
-    .map_err(|error| windows_error("WinHttpOpenRequest", error))?;
-    let redirect_policy = WINHTTP_OPTION_REDIRECT_POLICY_NEVER.to_ne_bytes();
-    unsafe {
-        WinHttpSetOption(
-            Some(request.0.cast_const()),
-            WINHTTP_OPTION_REDIRECT_POLICY,
-            Some(&redirect_policy),
-        )
-    }
-    .map_err(|error| windows_error("WinHttpSetOption(redirect policy)", error))?;
-    set_timeouts(request.0)?;
-    unsafe { WinHttpSendRequest(request.0, None, None, 0, 0, 0) }
-        .map_err(|error| windows_error("WinHttpSendRequest", error))?;
-    set_timeouts(request.0)?;
-    unsafe { WinHttpReceiveResponse(request.0, ptr::null_mut()) }.map_err(|error| {
-        let error = windows_error("WinHttpReceiveResponse", error);
-        if error.kind() == io::ErrorKind::TimedOut {
-            DownloadFailure::ResponseTimeout(error)
-        } else {
-            DownloadFailure::Other(error)
-        }
-    })?;
-    let mut status = 0u32;
-    let mut status_len = size_of::<u32>() as u32;
-    unsafe {
-        WinHttpQueryHeaders(
-            request.0,
-            WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-            PCWSTR::null(),
-            Some(ptr::from_mut(&mut status).cast()),
-            &mut status_len,
-            ptr::null_mut(),
-        )
-    }
-    .map_err(|error| windows_error("WinHttpQueryHeaders(status)", error))?;
-    if status != 200 {
-        return Err(io::Error::other(format!("model server returned HTTP {status}")).into());
-    }
-
-    let mut bytes = Vec::with_capacity(spec.byte_len);
-    loop {
-        set_timeouts(request.0)?;
-        let mut buffer = [0u8; 8192];
-        let mut received = 0u32;
-        unsafe {
-            WinHttpReadData(
-                request.0,
-                buffer.as_mut_ptr().cast(),
-                buffer.len() as u32,
-                &mut received,
-            )
-        }
-        .map_err(|error| windows_error("WinHttpReadData", error))?;
-        if received == 0 {
-            break;
-        }
-        let received = received as usize;
-        if received > buffer.len() || received > spec.byte_len.saturating_sub(bytes.len()) {
-            return Err(invalid_data("model response exceeds the manifest length").into());
-        }
-        bytes.extend_from_slice(&buffer[..received]);
-    }
-    download_timeouts(started)?;
-    verify_payload(spec, &bytes)?;
-    Ok(bytes)
-}
-
-// Hosted native tests need the phase of a transport failure, without logging
-// proxy addresses, request headers, response bodies, or any user text. No
-// callback or stderr output is installed in production builds.
-#[cfg(all(windows, test))]
-fn install_network_diagnostics(handle: *mut std::ffi::c_void) -> windows::core::Result<()> {
-    use std::sync::atomic::{AtomicU32, Ordering};
-
-    use windows::Win32::Networking::WinHttp::{
-        WINHTTP_CALLBACK_FLAG_ALL_NOTIFICATIONS, WINHTTP_CALLBACK_STATUS_CONNECTED_TO_SERVER,
-        WINHTTP_CALLBACK_STATUS_CONNECTING_TO_SERVER, WINHTTP_CALLBACK_STATUS_DETECTING_PROXY,
-        WINHTTP_CALLBACK_STATUS_NAME_RESOLVED, WINHTTP_CALLBACK_STATUS_RECEIVING_RESPONSE,
-        WINHTTP_CALLBACK_STATUS_REQUEST_SENT, WINHTTP_CALLBACK_STATUS_RESOLVING_NAME,
-        WINHTTP_CALLBACK_STATUS_RESPONSE_RECEIVED, WINHTTP_CALLBACK_STATUS_SECURE_FAILURE,
-        WINHTTP_CALLBACK_STATUS_SENDING_REQUEST, WinHttpSetStatusCallback,
-    };
-
-    // A response can trigger these notifications for every small body read.
-    // The hosted test only needs the first observation of each phase per attempt.
-    static SEEN_PHASES: AtomicU32 = AtomicU32::new(0);
-
-    unsafe extern "system" fn callback(
-        _handle: *mut std::ffi::c_void,
-        _context: usize,
-        status: u32,
-        _information: *mut std::ffi::c_void,
-        _information_len: u32,
-    ) {
-        let phase = match status {
-            WINHTTP_CALLBACK_STATUS_DETECTING_PROXY => "detecting proxy",
-            WINHTTP_CALLBACK_STATUS_RESOLVING_NAME => "resolving name",
-            WINHTTP_CALLBACK_STATUS_NAME_RESOLVED => "name resolved",
-            WINHTTP_CALLBACK_STATUS_CONNECTING_TO_SERVER => "connecting to server",
-            WINHTTP_CALLBACK_STATUS_CONNECTED_TO_SERVER => "connected to server",
-            WINHTTP_CALLBACK_STATUS_SENDING_REQUEST => "sending request",
-            WINHTTP_CALLBACK_STATUS_REQUEST_SENT => "request sent",
-            WINHTTP_CALLBACK_STATUS_RECEIVING_RESPONSE => "receiving response",
-            WINHTTP_CALLBACK_STATUS_RESPONSE_RECEIVED => "response received",
-            WINHTTP_CALLBACK_STATUS_SECURE_FAILURE => "secure connection failed",
-            _ => return,
-        };
-        if SEEN_PHASES.fetch_or(status, Ordering::Relaxed) & status != 0 {
-            return;
-        }
-        // Writing must not panic across the FFI callback boundary.
-        let _ = writeln!(io::stderr(), "WinHTTP model download: {phase}");
-    }
-
-    SEEN_PHASES.store(0, Ordering::Relaxed);
-    let previous = unsafe {
-        WinHttpSetStatusCallback(
-            handle,
-            Some(callback),
-            WINHTTP_CALLBACK_FLAG_ALL_NOTIFICATIONS,
-            0,
-        )
-    };
-    // WINHTTP_INVALID_STATUS_CALLBACK is the pointer-sized -1 sentinel.
-    if previous.is_some_and(|callback| callback as usize == usize::MAX) {
-        Err(windows::core::Error::from_thread())
-    } else {
-        Ok(())
-    }
 }
 
 #[cfg(not(test))]
@@ -615,37 +270,21 @@ fn embedded_bytes(spec: &ModelSpec) -> Option<&'static [u8]> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        super::model_catalog::{
-            MODEL_SOURCE_COMMIT, MODEL_SOURCE_HOST, language_for_tag, source_path,
-        },
-        *,
-    };
+    use std::fs;
+
+    use super::{super::model_catalog::language_for_tag, *};
 
     fn english() -> &'static ModelSpec {
-        match language_for_tag("en-US") {
-            Some(spec) => spec,
-            None => panic!("English manifest missing"),
-        }
+        language_for_tag("en-US").expect("English manifest missing")
     }
 
     fn english_bytes() -> &'static [u8] {
-        match embedded_bytes(english()) {
-            Some(bytes) => bytes,
-            None => panic!("English test fixture missing"),
-        }
+        embedded_bytes(english()).expect("English test fixture missing")
     }
 
     #[test]
     fn every_manifest_matches_its_published_model_crate() {
         assert_eq!(MODELS.len(), 75);
-        assert_eq!(MODEL_SOURCE_HOST, "raw.githubusercontent.com");
-        assert_eq!(MODEL_SOURCE_COMMIT.len(), 40);
-        assert!(
-            MODEL_SOURCE_COMMIT
-                .bytes()
-                .all(|character| character.is_ascii_hexdigit())
-        );
         let mut codes = HashSet::new();
         for spec in MODELS {
             assert!(codes.insert(spec.code), "duplicate {}", spec.code);
@@ -657,177 +296,52 @@ mod tests {
             );
             assert_eq!(spec.iso_639_3.len(), 3);
             assert_eq!(spec.sha256.len(), 64);
-            assert!(
-                spec.sha256
-                    .bytes()
-                    .all(|character| character.is_ascii_hexdigit())
-            );
-            assert!(source_path(spec).starts_with("/pemistahl/lingua-rs/"));
-            let Some(bytes) = embedded_bytes(spec) else {
-                panic!("Model fixture missing: {}", spec.code);
-            };
+            let bytes = embedded_bytes(spec).expect("model fixture missing");
             assert!(verify_payload(spec, bytes).is_ok(), "{}", spec.code);
             assert!(Map::new(bytes).is_ok(), "{}", spec.code);
         }
     }
 
     #[test]
-    fn verified_cached_model_is_used_without_a_download() -> io::Result<()> {
+    fn verified_cached_model_remains_available_offline() -> io::Result<()> {
         let directory = tempfile::tempdir()?;
         let path = directory.path().join("en.fst");
-        store_verified(&path, english(), english_bytes())?;
-        let loaded = load_cached_or_download(&path, english(), || {
-            panic!("A valid cached model must not trigger a download");
-        })?;
+        fs::write(&path, english_bytes())?;
+        let loaded = load_cached_model(&path, english())?;
         assert!(loaded.contains_key("hello"));
+        assert_eq!(fs::read(&path)?, english_bytes());
         Ok(())
     }
 
     #[test]
-    fn response_header_timeout_can_recover_with_one_fresh_attempt() -> io::Result<()> {
-        let mut attempts = 0;
-        let bytes = retry_response_timeout(Instant::now(), || {
-            attempts += 1;
-            if attempts == 1 {
-                Err(DownloadFailure::ResponseTimeout(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "WinHttpReceiveResponse timed out",
-                )))
-            } else {
-                Ok(vec![1, 2, 3])
-            }
-        })?;
-        assert_eq!(attempts, 2);
-        assert_eq!(bytes, [1, 2, 3]);
-        Ok(())
-    }
-
-    #[test]
-    fn repeated_response_header_timeouts_stop_after_two_attempts() {
-        let mut attempts = 0;
-        let result: io::Result<()> = retry_response_timeout(Instant::now(), || {
-            attempts += 1;
-            Err(DownloadFailure::ResponseTimeout(io::Error::new(
-                io::ErrorKind::TimedOut,
-                "WinHttpReceiveResponse timed out",
-            )))
-        });
-        assert!(matches!(result, Err(error) if error.kind() == io::ErrorKind::TimedOut));
-        assert_eq!(attempts, 2);
-    }
-
-    #[test]
-    fn status_integrity_and_other_transport_failures_are_never_retried() {
-        for (kind, message) in [
-            (io::ErrorKind::Other, "model server returned HTTP 503"),
-            (io::ErrorKind::InvalidData, "model SHA-256 mismatch"),
-            (io::ErrorKind::InvalidData, "truncated model response"),
-            (io::ErrorKind::TimedOut, "WinHttpSendRequest timed out"),
-            (io::ErrorKind::TimedOut, "WinHttpReadData timed out"),
-        ] {
-            let mut attempts = 0;
-            let result: io::Result<()> = retry_response_timeout(Instant::now(), || {
-                attempts += 1;
-                Err(io::Error::new(kind, message).into())
-            });
-            assert!(matches!(result, Err(error) if error.kind() == kind));
-            assert_eq!(attempts, 1, "{message}");
-        }
-    }
-
-    #[test]
-    fn response_retry_does_not_reset_an_almost_exhausted_shared_budget() {
-        let started = Instant::now() - DOWNLOAD_TIMEOUT + Duration::from_secs(9);
-        let mut attempts = 0;
-        let result: io::Result<()> = retry_response_timeout(started, || {
-            attempts += 1;
-            Err(DownloadFailure::ResponseTimeout(io::Error::new(
-                io::ErrorKind::TimedOut,
-                "WinHttpReceiveResponse timed out",
-            )))
-        });
-        assert!(matches!(result, Err(error) if error.kind() == io::ErrorKind::TimedOut));
-        assert_eq!(attempts, 1);
-    }
-
-    #[test]
-    fn network_timeouts_shrink_with_the_budget_and_never_become_infinite() -> io::Result<()> {
-        let started = Instant::now() - DOWNLOAD_TIMEOUT + Duration::from_secs(2);
-        let timeouts = download_timeouts(started)?;
-        assert!(
-            timeouts
-                .into_iter()
-                .all(|timeout| (1..=2_000).contains(&timeout))
-        );
-        assert!(timeouts[..3].iter().sum::<i32>() <= 2_000);
-        assert!(matches!(
-            download_timeouts(Instant::now() - DOWNLOAD_TIMEOUT),
-            Err(error) if error.kind() == io::ErrorKind::TimedOut
-        ));
-        Ok(())
-    }
-
-    #[cfg(windows)]
-    #[test]
-    #[ignore = "Requires an explicit hosted Windows network run with RUST_SWITCHER_HOSTED_E2E=1"]
-    fn hosted_native_model_download_verifies_cache_and_reuses_it_offline() -> io::Result<()> {
-        assert_eq!(
-            std::env::var("RUST_SWITCHER_HOSTED_E2E").as_deref(),
-            Ok("1"),
-            "This network test must be explicitly enabled on a hosted Windows runner"
-        );
-        let german = MODELS
-            .iter()
-            .find(|spec| spec.code == "de")
-            .ok_or_else(|| invalid_data("German model manifest is missing"))?;
+    fn missing_model_is_not_created() -> io::Result<()> {
         let directory = tempfile::tempdir()?;
-        let path = directory.path().join("de.fst");
-
-        // Call the production WinHTTP implementation directly: test fixtures
-        // must not satisfy this first load or hide a broken network path.
-        let downloaded = load_cached_or_download(&path, german, || download_model(german))?;
-        assert!(downloaded.contains_key("der"));
-        let bytes = read_verified(&path, german)?;
-        assert_eq!(bytes.len(), german.byte_len);
-
-        let cached = load_cached_or_download(&path, german, || {
-            Err(io::Error::other(
-                "A verified cached model unexpectedly requested network access",
-            ))
-        })?;
-        assert_eq!(cached.as_fst().as_bytes(), downloaded.as_fst().as_bytes());
+        let path = directory.path().join("missing.fst");
+        assert!(
+            matches!(load_cached_model(&path, english()), Err(error) if error.kind() == io::ErrorKind::NotFound)
+        );
+        assert!(!path.exists());
+        assert_eq!(fs::read_dir(directory.path())?.count(), 0);
         Ok(())
     }
 
     #[test]
-    fn same_length_corrupt_cache_is_replaced_by_a_verified_model() -> io::Result<()> {
+    fn corrupt_and_truncated_cache_are_rejected_without_modification() -> io::Result<()> {
         let directory = tempfile::tempdir()?;
         let path = directory.path().join("en.fst");
         let mut corrupt = english_bytes().to_vec();
         corrupt[0] ^= 0xFF;
         fs::write(&path, &corrupt)?;
-        assert!(read_verified(&path, english()).is_err());
-        let loaded = load_cached_or_download(&path, english(), || Ok(english_bytes().to_vec()))?;
-        assert!(loaded.contains_key("hello"));
-        assert_eq!(read_verified(&path, english())?, english_bytes());
+        assert!(load_cached_model(&path, english()).is_err());
+        assert_eq!(fs::read(&path)?, corrupt);
+        fs::write(&path, [0; 16])?;
+        assert!(load_cached_model(&path, english()).is_err());
+        assert_eq!(fs::read(&path)?, [0; 16]);
         Ok(())
     }
 
     #[test]
-    fn truncated_or_wrong_download_is_never_published() -> io::Result<()> {
-        let directory = tempfile::tempdir()?;
-        let path = directory.path().join("en.fst");
-        assert!(load_cached_or_download(&path, english(), || Ok(vec![0; 16])).is_err());
-        assert!(!path.exists());
-
-        let wrong = vec![0; english().byte_len];
-        assert!(load_cached_or_download(&path, english(), || Ok(wrong)).is_err());
-        assert!(!path.exists());
-        Ok(())
-    }
-
-    #[test]
-    fn cache_requests_are_deduplicated_and_retry_after_failure_is_bounded() {
+    fn cache_requests_are_deduplicated_and_failed_reads_have_a_cooldown() {
         let now = Instant::now();
         let mut state = CacheState::default();
         assert!(state.request("de", now));
@@ -836,20 +350,16 @@ mod tests {
         state.failed.insert("de", now);
         assert!(!state.request("de", now + Duration::from_secs(1)));
         assert!(state.request("de", now + RETRY_DELAY));
-        assert!(state.request("uk", now));
     }
 
     #[test]
     fn manifest_length_limit_is_enforced_before_allocation() {
-        let oversized = ModelSpec {
-            byte_len: MAX_MODEL_BYTES + 1,
-            ..*english()
-        };
-        assert!(verify_payload(&oversized, &[]).is_err());
-        let empty = ModelSpec {
-            byte_len: 0,
-            ..*english()
-        };
-        assert!(verify_payload(&empty, &[]).is_err());
+        for byte_len in [0, MAX_MODEL_BYTES + 1] {
+            let invalid = ModelSpec {
+                byte_len,
+                ..*english()
+            };
+            assert!(verify_payload(&invalid, &[]).is_err());
+        }
     }
 }

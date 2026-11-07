@@ -1,8 +1,8 @@
 # Rust Switcher privacy policy
 
-Last updated: November 4, 2026. This policy describes Rust Switcher,
-published by [QQRM](https://github.com/qqrm), including its portable Windows
-release. It covers the application itself; GitHub, package managers, Windows,
+Last updated: November 7, 2026. This policy describes the hardened
+[sherer-pro fork](https://github.com/sherer-pro/rust-switcher-rs) of Rust Switcher,
+including its locally built Windows release. It covers the application itself; GitHub, package managers, Windows,
 and applications in which you type have their own data handling practices.
 
 ## Local processing; no telemetry or input uploads
@@ -11,8 +11,7 @@ and applications in which you type have their own data handling practices.
 and language scoring locally and does not collect telemetry or usage analytics.
 The application does not send typed text, selections, input history, or preferences
 to QQRM or third parties. There is no server-side collection of your input by
-the application. It can download fixed language-model files for additional
-installed languages, as described below.
+the application. This fork has no runtime networking, model downloads, or self-updater.
 
 The keyboard hook and temporary input journal exist to convert text on your
 computer. The local memory and settings described below do not upload data
@@ -36,8 +35,20 @@ therefore not a limit on all text accessed during selection detection.
 
 Converted text is sent back to the focused application using simulated
 keyboard input. That application may store or transmit it according to its
-own settings and policies. Rust Switcher does not guarantee that sensitive
-fields, including password fields, are excluded from keyboard processing.
+own settings and policies.
+
+Before recording physical input and before text conversion, Rust Switcher checks
+the focused control's UI Automation IsPassword property and standard Win32
+Edit/RichEdit ES_PASSWORD style. A confirmed password field clears the active
+journal, every cached journal, and pending decoder composition. No new text is
+journaled and manual, smart, selection, and automatic text conversions are blocked.
+Selection probes also check before reading control text. Layout switching and
+the AutoConvert toggle remain available.
+
+Unknown detection remains fail-open so ordinary typing is not disabled globally.
+Custom controls that expose neither password signal, cross-integrity restrictions,
+and focus changes between API calls remain limitations. Detection does not read
+password contents. Freed memory is not securely overwritten.
 
 ## Memory and retention
 
@@ -68,40 +79,26 @@ clipboard. Selection conversion uses the Windows text interfaces described
 above and simulated input; it has no clipboard fallback and does not send
 Ctrl+C or Ctrl+V to perform conversion.
 
-## Language models and downloads
+## Local language models
 
 English and Russian language models are included with the application. Other
-models are requested in the background for languages corresponding to the
-installed Windows layouts. These requests are HTTPS downloads of fixed Lingua
-model files from `raw.githubusercontent.com`, using pinned resource versions.
-The request includes a model resource path and the Rust Switcher version in
-its user agent. GitHub and network intermediaries can observe ordinary connection
-metadata, such as the requesting IP address, and the requested language model.
-No typed text, selected text, journal contents, or scoring candidates are included.
+models are read only from existing files at
+`%LOCALAPPDATA%\RustSwitcher\models\<model-hash>\<language>.fst`.
+Every file is checked against its expected size and SHA-256 before use.
+Missing or invalid files leave the model unavailable; the application does not
+download, replace, repair, or create model files. These files contain public
+model data, not input history. Loaded models remain in RAM until process exit.
 
-Each model is checked against an expected byte length and SHA-256 before use.
-Verified models are cached at
-`%LOCALAPPDATA%\RustSwitcher\models\<model-hash>\<language>.fst` and can then
-be used offline. Cache files contain public model data, not a history of your
-input. Models already loaded into memory remain available until process exit.
-
-To remove downloaded models, exit the application and delete
-`%LOCALAPPDATA%\RustSwitcher\models`. Models needed by installed layouts may
-be downloaded again on a later launch or conversion. Removing a Windows layout
-stops it from being a conversion target; it does not delete previously cached
-model files. Download failures leave explicit conversion with its deterministic
-layout fallback, while automatic correction requires sufficient local evidence.
+Explicit conversion retains its deterministic layout fallback when evidence is
+unavailable. Smart conversion and AutoConvert retain their existing requirement
+for sufficient local evidence.
 
 ## Application updates
 
-**Check for updates** in the tray menu contacts GitHub over HTTPS to read the
-latest stable release metadata and, when a newer release exists, downloads its
-Windows executable. The download is verified against the SHA-256 digest and
-size in GitHub's release metadata before installation. An isolated PowerShell
-helper updates the existing executable after Rust Switcher exits and restarts it.
-The update log is stored in
-`%LOCALAPPDATA%\RustSwitcher\updater.log` and contains only update events
-and errors, not typed text or input history. Update checks are user-initiated.
+This fork has no update checks, updater menu item, external update helper, or
+automatic executable replacement. Updates require reviewing and rebuilding this
+fork manually. Existing model files and logs left by an earlier version are not
+automatically deleted.
 
 ## Saved settings and autostart
 
@@ -149,22 +146,19 @@ text if you do not want Rust Switcher to process that input.
 
 ## Development logging
 
-The published release does not enable tracing output. Debug builds with the
-`debug-tracing` feature can write diagnostics to standard error, controlled
-by `RUST_LOG`. These diagnostics may include original and converted text,
-keyboard layouts, and window or caret information. A terminal, development
-tool, or redirection configured by the developer may retain that output.
-Avoid sensitive input during such sessions and remove captured logs when
-they are no longer needed.
+The release does not enable tracing output. Debug builds with the
+`debug-tracing` feature can write metadata to standard error, controlled by
+`RUST_LOG`: lengths, operation status, layouts, and secure-field blocking.
+Original, selected, converted, journal, and clipboard text are not logged.
+A terminal or developer-configured redirection can retain these metadata logs.
 
 ## Transmission and security
 
 The application performs conversion on the device. It has no telemetry,
 analytics, automatic crash uploads, or network transmission of typed text,
-selections, journals, or preferences to QQRM or other recipients. The model
-downloads described above contact GitHub for public resources. Downloading or
-updating the application through GitHub or a package manager involves those
-services separately. Information you choose to submit in a support report is
+selections, journals, or preferences to other recipients. The runtime has no
+networking APIs or external-process execution. Obtaining sources or build
+dependencies through GitHub or Cargo involves those services separately. Information you choose to submit in a support report is
 also separate from application processing.
 
 Text in memory and saved preferences are not encrypted by Rust Switcher.
@@ -176,7 +170,7 @@ or protection against software with access to your account or process.
 ## Questions and policy updates
 
 For questions about this policy, use the
-[project issue tracker](https://github.com/qqrm/rust-switcher-rs/issues).
+[project issue tracker](https://github.com/sherer-pro/rust-switcher-rs/issues).
 Issues are public: do not include passwords, private text, or unreviewed
 diagnostic logs. Changes to this policy will be published in this file with
 an updated date and remain visible in the repository history.

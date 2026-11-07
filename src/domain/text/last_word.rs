@@ -108,6 +108,9 @@ pub fn autoconvert_last_word(state: &mut AppState) {
         }
     };
     sleep_before_convert(state);
+    if crate::platform::win::secure_input::protect_current_context().is_secure() {
+        return;
+    }
     let target = FocusTarget::capture();
     let Some(payload) = take_last_word_payload() else {
         tracing::trace!("journal: no last word");
@@ -157,7 +160,7 @@ pub fn autoconvert_last_word(state: &mut AppState) {
         tracing::trace!(reason = %reason.as_str(), "autoconvert skip: decision");
         return;
     }
-    tracing::trace!(word = %payload.run.text, converted = %converted, "autoconvert decision");
+    tracing::trace!(word_len = payload.run_len, "autoconvert decision");
     if let Err(err) = apply_last_word_replacement(&payload, &converted, restore.target) {
         tracing::warn!(error = %err.as_str(), "autoconvert apply failed");
         return;
@@ -211,6 +214,11 @@ impl Drop for JournalRestore<'_> {
         if self.committed {
             return;
         }
+        if self.target.is_some()
+            && crate::platform::win::secure_input::protect_current_context().is_secure()
+        {
+            return;
+        }
         if self.target.is_some() && !self.target_is_current() {
             crate::input::ring_buffer::invalidate();
             return;
@@ -244,6 +252,11 @@ impl<'a> JournalRestoreSequence<'a> {
 impl Drop for JournalRestoreSequence<'_> {
     fn drop(&mut self) {
         if self.committed {
+            return;
+        }
+        if self.target.is_some()
+            && crate::platform::win::secure_input::protect_current_context().is_secure()
+        {
             return;
         }
         if self.target.is_some() && !self.target_is_current() {
@@ -550,6 +563,9 @@ fn convert_last_word_impl(state: &mut AppState, switch_layout: bool, mode: Direc
         return true;
     }
     sleep_before_convert(state);
+    if crate::platform::win::secure_input::protect_current_context().is_secure() {
+        return true;
+    }
     let target = FocusTarget::capture();
     let Some(payload) = take_last_word_payload() else {
         tracing::info!("journal: no last word");
@@ -586,11 +602,11 @@ fn convert_last_word_impl(state: &mut AppState, switch_layout: bool, mode: Direc
         return true;
     }
     if matches!(mode, DirectionMode::TextFirst) && smart::text_looks_correct(&payload.run.text) {
-        tracing::trace!(text = %payload.run.text, "smart convert skipped: text already looks correct");
+        tracing::trace!("smart convert skipped: text already looks correct");
         return true;
     }
     let converted = convert_with_mode(&payload.run.text, &payload.run.layout, mode);
-    tracing::trace!(%converted, "converted");
+    tracing::trace!(converted_len = converted.chars().count(), "converted");
     if apply_last_word_conversion(&payload, &converted, restore.target) {
         update_journal(&payload, &converted);
         restore.commit();
@@ -618,6 +634,9 @@ fn convert_last_sequence_impl(state: &mut AppState, switch_layout: bool, mode: D
         return;
     }
     sleep_before_convert(state);
+    if crate::platform::win::secure_input::protect_current_context().is_secure() {
+        return;
+    }
     let target = FocusTarget::capture();
     let Some(payload) = take_last_sequence_payload() else {
         tracing::info!("journal: no last sequence");
@@ -659,11 +678,11 @@ fn convert_last_sequence_impl(state: &mut AppState, switch_layout: bool, mode: D
         return;
     }
     if matches!(mode, DirectionMode::TextFirst) && smart::text_looks_correct(&payload.seq_text) {
-        tracing::trace!(text = %payload.seq_text, "smart convert skipped: text already looks correct");
+        tracing::trace!("smart convert skipped: text already looks correct");
         return;
     }
     let converted = convert_sequence_runs(&payload.runs, mode);
-    tracing::trace!(%converted, "converted");
+    tracing::trace!(converted_len = converted.chars().count(), "converted");
     if apply_last_sequence_conversion(&payload, &converted, restore.target) {
         update_journal_sequence(&payload, &converted, mode);
         restore.commit();
@@ -728,10 +747,8 @@ fn take_last_word_payload() -> Option<LastRunPayload> {
         suffix_text_and_meta(&suffix_runs);
     let run_len = run.text.chars().count();
     tracing::trace!(
-        run_text = %run.text,
         run_layout = ?run.layout,
         run_origin = ?run.origin,
-        suffix_text = %suffix_text,
         run_len,
         suffix_len,
         suffix_spaces_only,
@@ -768,9 +785,7 @@ fn take_last_sequence_payload() -> Option<LastSequencePayload> {
     let seq_len = seq_text.chars().count();
     let seq_has_newline = seq_text.contains('\n') || seq_text.contains('\r');
     tracing::trace!(
-        seq_text = %seq_text,
         seq_layout = ?layout,
-        suffix_text = %suffix_text,
         seq_len,
         suffix_len,
         suffix_spaces_only,
@@ -882,7 +897,7 @@ fn update_journal_sequence(p: &LastSequencePayload, converted: &str, mode: Direc
         }
     }));
     crate::input_journal::push_runs(p.suffix_runs.iter().cloned());
-    tracing::trace!(%converted, "journal updated (sequence)");
+    tracing::trace!(converted_len = converted.chars().count(), "journal updated (sequence)");
 }
 fn restore_journal_original(p: &LastRunPayload) {
     crate::input_journal::push_run(p.run.clone());
@@ -916,6 +931,25 @@ mod tests {
         LanguageDetectorBuilder::from_languages(&[Language::Russian, Language::English])
             .with_minimum_relative_distance(0.20)
             .build()
+    }
+
+    #[test]
+    #[tracing_test::traced_test]
+    fn journal_traces_contain_metadata_but_not_input_or_conversion_text() {
+        let _guard = test_lock();
+        ring_buffer::invalidate();
+        ring_buffer::push_text("TracePrivacy-48291 ");
+        let word = take_last_word_payload().expect("word payload");
+        restore_journal_original(&word);
+        let sequence = take_last_sequence_payload().expect("sequence payload");
+        update_journal_sequence(&sequence, "ConvertedPrivacy-48291", DirectionMode::LayoutFirst);
+
+        assert!(logs_contain("journal extracted run"));
+        assert!(logs_contain("journal extracted sequence"));
+        assert!(logs_contain("journal updated (sequence)"));
+        assert!(!logs_contain("TracePrivacy-48291"));
+        assert!(!logs_contain("ConvertedPrivacy-48291"));
+        ring_buffer::invalidate();
     }
     #[test]
     fn ru_layout_punctuation_run_converts_ru_to_en() {

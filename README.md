@@ -8,8 +8,8 @@ It was created as an open-source alternative to Punto Switcher and Caramba
 Switcher with a clear privacy requirement: keyboard input stays on your device.
 **No telemetry, no usage analytics, and no input uploads.** Text conversion and
 language scoring happen on your computer. English and Russian models are bundled;
-models for additional installed languages are downloaded once and cached locally.
-These downloads contain no typed text, selections, or input history.
+other languages can use existing verified local models. This fork has no runtime
+network access or self-updater.
 
 ## Features
 
@@ -17,7 +17,7 @@ These downloads contain no typed text, selections, or input history.
 - Convert the last typed sequence via a hotkey ("smart" conversion also handles selection)
 - Auto-convert the last word while typing (can be disabled in Settings; runtime toggle starts paused)
 - Automatically discover added and removed Windows layouts, including variants of the same language
-- Load language models on demand, with local scoring and verified offline caches
+- Read verified local language models on demand, without downloads
 - Tray icon and quick actions menu
 - Light and dark UI themes
 - Settings are saved to a config file
@@ -31,31 +31,20 @@ These downloads contain no typed text, selections, or input history.
 
 ## Install
 
-### Via cargo
+### Build this fork locally
 
 ```powershell
-cargo install rust-switcher
+cargo +nightly build --release --locked
 ```
 
-### From GitHub Releases
-
-Download `rust-switcher.exe` from Releases.
+Use the resulting `target\release\rust-switcher.exe`. An upstream release or
+`cargo install rust-switcher` installs upstream behavior rather than this fork's
+security changes.
 
 ### Updating
 
-Right-click the tray icon and select **Check for updates**. When a newer stable
-GitHub Release is available, Rust Switcher downloads `rust-switcher.exe`,
-verifies its size and GitHub-published SHA-256 digest, then gracefully exits.
-A detached PowerShell helper replaces the executable and restarts the app.
-The previous executable is kept for rollback until the replacement launches.
-This also works for installations made through Cargo, without running Cargo.
-
-Updates require Windows PowerShell 5.1, HTTPS access to GitHub, and write access
-to the installation directory. The update log is saved to
-`%LOCALAPPDATA%\RustSwitcher\updater.log`. Debug builds cannot self-update.
-
-External `cargo install rust-switcher --force` still cannot replace a running
-executable. Exit Rust Switcher first when installing through Cargo.
+Updates are manual: review source changes, build this fork, exit Rust Switcher,
+and replace its executable. The application does not check for or install updates.
 
 ## Configuration
 
@@ -94,15 +83,15 @@ signature to be loaded.
 With several layouts installed, local character n-gram models rank possible
 results. The model catalog covers 75 languages; only models relevant to installed
 layouts are requested. English and Russian work immediately offline. Additional
-models are loaded in the background from pinned Lingua model resources on GitHub,
-verified against their expected size and SHA-256, and stored under
+models are read in the background from existing local files under
 `%LOCALAPPDATA%\RustSwitcher\models\<model-hash>\<language>.fst`.
+Their expected size and SHA-256 are verified before use. Missing or invalid models
+are unavailable; no files are downloaded or written to the model cache.
 
 An explicit conversion has a deterministic fallback to the next usable Windows
 layout when language evidence is ambiguous or unavailable, including punctuation.
 Smart conversion and AutoConvert leave text unchanged when evidence is insufficient.
-A network failure therefore does not block keyboard input or require a sign-in;
-cached models remain usable offline.
+Unavailable models do not block keyboard input; existing valid models remain usable.
 
 The recent-input journal holds up to 4,096 characters. A conversion that would
 include a prefix already dropped from the journal is rejected as a whole. Selecting
@@ -116,10 +105,9 @@ It does not upload typed text, selections, input history, or preferences to
 the developer or third parties.
 
 Recent input is held temporarily in memory to support conversion; preferences
-and downloaded models are saved locally. Model downloads reveal the requested
-model and ordinary connection metadata to the hosting service, but include no
-input text. The [privacy policy](PRIVACY.md) explains processing, retention,
-model downloads, clipboard behavior, and development logging.
+are saved locally. Confirmed password fields clear the journal and its cache,
+and block journaling and text conversion. The [privacy policy](PRIVACY.md) explains
+detection limits, retention, clipboard behavior, and metadata-only development logging.
 
 Pausing or disabling AutoConvert leaves keyboard tracking and manual hotkeys
 running. To stop all processing, right-click the tray icon and choose **Exit**;

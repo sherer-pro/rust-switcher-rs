@@ -1283,6 +1283,46 @@ pub fn clear_foreground_cache_for_test() {
     with_journal_cache_mut(HashMap::clear);
 }
 
+/// Clear all retained text and decoder composition when a secure field is detected.
+#[cfg(any(test, windows))]
+pub fn clear_secure_input_data() {
+    invalidate();
+    #[cfg(windows)]
+    with_journal_cache_mut(HashMap::clear);
+}
+
+#[cfg(test)]
+mod secure_clear_tests {
+    use super::*;
+
+    #[test]
+    fn secure_clear_removes_active_text() {
+        let _guard = test_guard();
+        push_text("SecureTest-48291");
+        clear_secure_input_data();
+        assert!(runs_snapshot().is_empty());
+        assert!(take_last_layout_run_with_suffix().is_none());
+        assert!(take_last_sequence_with_suffix().is_none());
+        assert!(!last_char_triggers_autoconvert());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn secure_clear_prevents_restoring_cached_control_text() {
+        let _guard = test_guard();
+        invalidate();
+        test_switch_foreground(101, 1_000);
+        push_text("cached-sensitive-input");
+        test_switch_foreground(202, 1_100);
+        push_text("active-sensitive-input");
+
+        clear_secure_input_data();
+        assert!(runs_snapshot().is_empty());
+        test_switch_foreground(101, 1_200);
+        assert!(runs_snapshot().is_empty());
+    }
+}
+
 #[cfg(all(test, windows))]
 pub fn test_switch_foreground(raw: isize, now_ms: u64) {
     with_journal_mut(|j| j.switch_foreground(raw, focus_key_for_test(raw, 0), now_ms));

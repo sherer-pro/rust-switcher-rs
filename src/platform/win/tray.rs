@@ -26,7 +26,6 @@ use super::winutil::make_int_resource;
 pub enum TrayMenuAction {
     None,
     ToggleAutoConvert,
-    Update,
 }
 
 pub const WM_APP_TRAY: u32 = WM_APP + 3;
@@ -35,7 +34,6 @@ const ID_EXIT: u32 = 1001;
 const ID_SHOW_HIDE: u32 = 1002;
 const ID_AUTOCONVERT_TOGGLE: u32 = 1003;
 const ID_CHANGE_THEME: u32 = 1004;
-const ID_UPDATE: u32 = 1005;
 const DEFAULT_TRAY_TOOLTIP: &str = "Rust Switcher";
 
 unsafe fn show_popup_menu_at_cursor(hwnd: HWND, hmenu: HMENU) -> u32 {
@@ -222,8 +220,8 @@ fn balloon_common(
 
     tracing::debug!(
         msg = "tray_balloon_attempt",
-        title = title,
-        text = text,
+        title_len = title.chars().count(),
+        text_len = text.chars().count(),
         flags = flags,
     );
 
@@ -250,7 +248,7 @@ fn balloon_common(
             tracing::debug!(
                 msg = "tray_balloon_suppressed",
                 suppressed_total = g.suppressed,
-                title = title
+                title_len = title.chars().count()
             );
             return Ok(());
         }
@@ -277,7 +275,7 @@ fn balloon_common(
     fill_wide(&mut nid.szInfo, text);
 
     if unsafe { Shell_NotifyIconW(NIM_MODIFY, &raw const nid).as_bool() } {
-        tracing::debug!(msg = "tray_balloon_shown", title = title);
+        tracing::debug!(msg = "tray_balloon_shown");
         return Ok(());
     }
 
@@ -448,9 +446,6 @@ fn build_tray_menu(
     unsafe { append_change_theme_item(hmenu, current_theme_dark) }?;
     unsafe { AppendMenuW(hmenu, MF_SEPARATOR, 0, PCWSTR::null()) }?;
 
-    unsafe { append_update_item(hmenu) }?;
-    unsafe { AppendMenuW(hmenu, MF_SEPARATOR, 0, PCWSTR::null()) }?;
-
     unsafe { append_exit_item(hmenu) }?;
 
     Ok(hmenu)
@@ -532,14 +527,6 @@ unsafe fn append_show_hide_item(hmenu: HMENU, window_visible: bool) -> Result<()
     Ok(())
 }
 
-unsafe fn append_update_item(hmenu: HMENU) -> Result<()> {
-    use windows::Win32::UI::WindowsAndMessaging::{AppendMenuW, MF_STRING};
-
-    let wide: Vec<u16> = "Check for updates\0".encode_utf16().collect();
-    (unsafe { AppendMenuW(hmenu, MF_STRING, ID_UPDATE as usize, PCWSTR(wide.as_ptr())) })?;
-    Ok(())
-}
-
 unsafe fn append_exit_item(hmenu: HMENU) -> Result<()> {
     use windows::Win32::UI::WindowsAndMessaging::{AppendMenuW, MF_STRING};
 
@@ -571,8 +558,6 @@ unsafe fn handle_tray_menu_cmd(
             super::apply_theme_from_tray(hwnd, !current_theme_dark);
             Ok(TrayMenuAction::None)
         }
-
-        ID_UPDATE => Ok(TrayMenuAction::Update),
 
         ID_EXIT => {
             (unsafe { request_process_exit(hwnd) })?;

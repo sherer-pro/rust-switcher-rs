@@ -156,6 +156,12 @@ extern "system" fn proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         return unsafe { CallNextHookEx(hook, code, wparam, lparam) };
     }
 
+    let secure_status = if is_keydown {
+        super::secure_input::protect_current_context()
+    } else {
+        super::secure_input::SecureInputStatus::Unknown
+    };
+
     let decision = if is_keydown {
         handle_keydown(vk, is_mod)
     } else if is_keyup {
@@ -164,7 +170,10 @@ extern "system" fn proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         Ok(HookDecision::Pass)
     };
 
-    if is_keydown && matches!(decision.as_ref(), Ok(HookDecision::Pass)) {
+    if is_keydown
+        && matches!(decision.as_ref(), Ok(HookDecision::Pass))
+        && super::secure_input::should_record_input(secure_status)
+    {
         let typed = input::ring_buffer::record_keydown(kb, vk);
 
         if typed.is_some()

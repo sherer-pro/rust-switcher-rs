@@ -53,8 +53,8 @@ struct Evidence {
 
 /// Warms only models corresponding to the installed Windows language tags.
 ///
-/// EN/RU are bundled. Other languages enqueue a deduplicated background cache
-/// load or verified download. This function never waits for disk or network I/O.
+/// EN/RU are bundled. Other languages enqueue a deduplicated background read
+/// of an existing verified local cache. This function never waits for disk I/O.
 /// Models are immutable and shared with subsequent ranking calls.
 pub(crate) fn warm_languages(languages: &[String]) {
     for language in languages.iter().filter_map(|tag| language_for_tag(tag)) {

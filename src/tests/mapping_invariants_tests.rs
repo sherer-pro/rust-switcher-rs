@@ -1,4 +1,6 @@
-use crate::domain::text::mapping::convert_ru_en_bidirectional;
+use crate::domain::text::mapping::{
+    ConversionDirection, convert_ru_en_bidirectional, convert_ru_en_with_direction,
+};
 
 const LATIN_BIJECTIVE: &str = "qwertyuiop[]asdfghjkl;'zxcvbnm,.`QWERTYUIOP{}ASDFGHJKL:\"ZXCVBNM<>~";
 
@@ -70,4 +72,58 @@ fn punctuation_rules_apply_only_in_en_to_ru_mode() {
 fn ampersand_prefers_latin_direction_when_present() {
     assert_eq!(convert_ru_en_bidirectional("a&"), "ф?");
     assert_eq!(convert_ru_en_bidirectional("я?"), "z&");
+}
+
+#[test]
+fn common_words_preserve_expected_case() {
+    for (input, expected) in [
+        ("ghbdtn", "привет"),
+        ("Ghbdtn", "Привет"),
+        ("GHBDTN", "ПРИВЕТ"),
+        ("руддщ", "hello"),
+        ("Руддщ", "Hello"),
+        ("РУДДЩ", "HELLO"),
+    ] {
+        assert_eq!(convert_ru_en_bidirectional(input), expected);
+    }
+}
+
+#[test]
+fn multiple_words_spaces_and_digits_are_stable() {
+    assert_eq!(
+        convert_ru_en_bidirectional("ghbdtn rfr ltkf"),
+        "привет как дела"
+    );
+    assert_eq!(
+        convert_ru_en_with_direction("123 456", ConversionDirection::EnToRu),
+        "123 456"
+    );
+    assert_eq!(
+        convert_ru_en_with_direction("123 456", ConversionDirection::RuToEn),
+        "123 456"
+    );
+}
+
+#[test]
+fn yo_and_punctuation_follow_physical_key_mapping() {
+    assert_eq!(
+        convert_ru_en_with_direction("`~", ConversionDirection::EnToRu),
+        "ёЁ"
+    );
+    assert_eq!(
+        convert_ru_en_with_direction("ёЁ", ConversionDirection::RuToEn),
+        "`~"
+    );
+    assert_eq!(
+        convert_ru_en_with_direction("[];',.", ConversionDirection::EnToRu),
+        "хъжэбю"
+    );
+    assert_eq!(
+        convert_ru_en_with_direction("{}:\"<>~", ConversionDirection::EnToRu),
+        "ХЪЖЭБЮЁ"
+    );
+    assert_eq!(
+        convert_ru_en_with_direction("@#$^&", ConversionDirection::EnToRu),
+        "\"№;:?"
+    );
 }

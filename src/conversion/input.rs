@@ -113,7 +113,9 @@ pub fn replace_selection_unicode(text: &str, target_is_current: impl FnOnce() ->
     let Some(size) = input_struct_size_i32() else {
         return false;
     };
-    if !target_is_current() {
+    if !target_is_current()
+        || crate::platform::win::secure_input::protect_current_context().is_secure()
+    {
         return false;
     }
     let sent = unsafe { SendInput(&inputs, size) } as usize;
@@ -163,7 +165,9 @@ pub fn replace_before_caret(
     let Some(size) = input_struct_size_i32() else {
         return false;
     };
-    if !target_is_current() {
+    if !target_is_current()
+        || crate::platform::win::secure_input::protect_current_context().is_secure()
+    {
         return false;
     }
     let sent = unsafe { SendInput(&inputs, size) } as usize;

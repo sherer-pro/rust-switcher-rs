@@ -217,7 +217,6 @@ pub fn handle_tray_message(hwnd: HWND, wparam: WPARAM, lparam: LPARAM) -> LRESUL
                 ) {
                     Ok(action) => match action {
                         super::tray::TrayMenuAction::None => {}
-                        super::tray::TrayMenuAction::Update => super::updater::start(hwnd),
                         super::tray::TrayMenuAction::ToggleAutoConvert => {
                             if let Some(next) = next_autoconvert_state(
                                 state.autoconvert_feature_enabled,

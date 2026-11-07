@@ -12,8 +12,6 @@ pub(super) struct ModelSpec {
     pub sha256: &'static str,
 }
 
-pub(super) const MODEL_SOURCE_COMMIT: &str = "77e94d1a2a8e49bed873a7c502bcb51ba803ef0f";
-pub(super) const MODEL_SOURCE_HOST: &str = "raw.githubusercontent.com";
 pub(super) const MAX_MODEL_BYTES: usize = 16 * 1024 * 1024;
 
 pub(super) static MODELS: &[ModelSpec] = &[
@@ -481,11 +479,4 @@ pub(super) fn language_for_tag(tag: &str) -> Option<&'static ModelSpec> {
     MODELS
         .iter()
         .find(|model| model.code == primary || model.iso_639_3 == primary)
-}
-
-pub(super) fn source_path(model: &ModelSpec) -> String {
-    format!(
-        "/pemistahl/lingua-rs/{MODEL_SOURCE_COMMIT}/language-models/{}/models/ngrams.fst",
-        model.code
-    )
 }

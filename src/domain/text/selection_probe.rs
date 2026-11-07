@@ -90,6 +90,9 @@ impl CapturedSelection {
     /// Validate both target identity and the exact selection after the conversion delay.
     pub(super) fn is_current(&self) -> bool {
         if !self.target.is_current() { return false; }
+        if crate::platform::win::secure_input::protect_current_context().is_secure() {
+            return false;
+        }
         if self.target.is_own_native_edit() {
             return same_native_selection(self);
         }
@@ -204,6 +207,10 @@ impl ProbeState {
         }
         let Some(automation) = self.automation.as_ref() else { return Ok(SelectionProbe::Blocked); };
         let element = unsafe { automation.GetFocusedElement() }?;
+        if unsafe { element.CurrentIsPassword() }.is_ok_and(|value| value.as_bool()) {
+            crate::input::ring_buffer::clear_secure_input_data();
+            return Ok(SelectionProbe::Blocked);
+        }
         let pattern: IUIAutomationTextPattern = match unsafe { element.GetCurrentPatternAs(UIA_TextPatternId) } {
             Ok(pattern) => pattern,
             // Preserve fallback for an explicitly unsupported pattern only.
@@ -285,6 +292,10 @@ fn same_native_selection(selection: &CapturedSelection) -> bool {
 fn probe_native(target: FocusTarget, max_chars: usize) -> SelectionProbe {
     if !target.is_current() { return SelectionProbe::Blocked; }
     let hwnd = target.focus_hwnd();
+    if crate::platform::win::secure_input::win32_password_state(hwnd) == Some(true) {
+        crate::input::ring_buffer::clear_secure_input_data();
+        return SelectionProbe::Blocked;
+    }
     let mut start = 0u32;
     let mut end = 0u32;
     // System messages below WM_USER marshal these pointers across processes.

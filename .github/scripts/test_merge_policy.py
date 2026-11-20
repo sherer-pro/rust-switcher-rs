@@ -25,7 +25,7 @@ def evaluate(policy, value, **args):
 def ready_pr():
     return {
         "author": {"login": "app/dependabot"}, "isCrossRepository": False,
-        "headRefOid": "checked", "baseRefName": "dev", "isDraft": False,
+        "headRefOid": "checked", "baseRefName": "main", "isDraft": False,
         "state": "OPEN", "mergeStateStatus": "CLEAN",
         "statusCheckRollup": [
             {"__typename": "CheckRun", "name": name, "status": "COMPLETED",
@@ -49,7 +49,7 @@ class MergePolicyTests(unittest.TestCase):
     def test_wrong_identity_or_target_is_rejected(self):
         for key, value in [("author", {"login": "qqrm"}),
                            ("isCrossRepository", True), ("isDraft", True),
-                           ("baseRefName", "other"), ("state", "CLOSED"),
+                           ("baseRefName", "dev"), ("state", "CLOSED"),
                            ("headRefOid", "replaced"),
                            ("mergeStateStatus", "UNKNOWN"),
                            ("mergeStateStatus", "BEHIND")]:

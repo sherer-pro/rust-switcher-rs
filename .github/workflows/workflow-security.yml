@@ -3,7 +3,7 @@ name: Workflow Security
 on:
   pull_request:
   push:
-    branches: [dev]
+    branches: [main]
   workflow_dispatch:
 
 permissions:

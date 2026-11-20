@@ -44,7 +44,7 @@ jobs:
           if ! jq -e --arg sha "$CHECKED_SHA" '
             # eligibility-policy-begin
             (.author.login == "app/dependabot" or .author.login == "dependabot[bot]") and
-            .isCrossRepository == false and .baseRefName == "dev" and
+            .isCrossRepository == false and .baseRefName == "main" and
             .isDraft == false and .headRefOid == $sha and
             ((.state == "OPEN" and .mergeStateStatus == "CLEAN") or
              (.state == "MERGED" and (.mergeCommit.oid | test("^[a-f0-9]{40}$")))) and
@@ -73,14 +73,14 @@ jobs:
           ' <<< "$commits" >/dev/null
 
           if jq -e '.state == "OPEN"' <<< "$info" >/dev/null; then
-            base_sha="$(gh api "repos/$REPO/git/ref/heads/dev" --jq .object.sha)"
+            base_sha="$(gh api "repos/$REPO/git/ref/heads/main" --jq .object.sha)"
             comparison="$(gh api "repos/$REPO/compare/$base_sha...$CHECKED_SHA")"
             if ! jq -e --arg base "$base_sha" '
               # freshness-policy-begin
               .behind_by == 0 and .merge_base_commit.sha == $base
               # freshness-policy-end
             ' <<< "$comparison" >/dev/null; then
-              echo 'Dependabot must refresh the batch after dev changed; no merge.'
+              echo 'Dependabot must refresh the batch after main changed; no merge.'
               exit 0
             fi
 
@@ -95,7 +95,7 @@ jobs:
 
           # Recovery after a transient dispatch failure is allowed only while the
           # same immutable merge is still the target branch head.
-          current="$(gh api "repos/$REPO/git/ref/heads/dev" --jq .object.sha)"
+          current="$(gh api "repos/$REPO/git/ref/heads/main" --jq .object.sha)"
           if [ "$current" != "$merge_sha" ]; then
             echo 'Target branch advanced; do not publish an unrelated commit.'
             exit 0
@@ -115,5 +115,5 @@ jobs:
             echo 'This merge already has an active or successful publication run.'
             exit 0
           fi
-          gh workflow run release.yml --repo "$REPO" --ref dev \
+          gh workflow run release.yml --repo "$REPO" --ref main \
             -f expected_sha="$merge_sha"

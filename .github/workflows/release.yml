@@ -2,7 +2,7 @@ name: Release
 
 on:
   push:
-    branches: [dev]
+    branches: [main]
   workflow_dispatch:
     inputs:
       expected_sha:
@@ -18,12 +18,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-dev
+  group: release-main
   cancel-in-progress: false
 
 jobs:
   prepare:
-    if: github.ref == 'refs/heads/dev'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -80,7 +80,7 @@ jobs:
 
             if (
               !pr.merged ||
-              pr.base.ref !== 'dev' ||
+              pr.base.ref !== 'main' ||
               pr.user.login !== 'dependabot[bot]' ||
               pr.merge_commit_sha !== context.sha
             ) {

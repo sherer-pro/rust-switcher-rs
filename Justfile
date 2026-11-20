@@ -34,7 +34,7 @@ crates-release:
 	@pwsh -ExecutionPolicy Bypass -NoLogo -NoProfile -File scripts\release\cargo_publish.ps1
 
 # release VERSION?
-# Dispatch the isolated Release workflow for the exact clean dev commit.
+# Dispatch the isolated Release workflow for the exact clean main commit.
 # checked version PR -> unprivileged build/package -> fresh publication job
 release VERSION='':
 	@pwsh -ExecutionPolicy Bypass -NoLogo -NoProfile -File scripts\release\release.ps1 {{VERSION}}

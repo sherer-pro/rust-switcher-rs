@@ -1,6 +1,6 @@
 # Release process
 
-The primary branch is `dev`. From a clean, synchronized checkout, `just release`
+The primary branch is `main`. From a clean, synchronized checkout, `just release`
 dispatches the Release workflow for that exact GitHub commit. `just release 1.2.3`
 requests an explicit numeric version. Dispatch does not mean publication succeeded;
 follow the workflow and its version PR.

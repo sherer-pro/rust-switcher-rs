@@ -155,10 +155,10 @@ Do not share a common `CARGO_TARGET_DIR` across concurrent task worktrees.
 
 ## Git Workflow
 
-- Do not push directly to `dev` or `main`.
+- Do not push directly to `main`.
 - Always create a feature branch (recommended prefix: `codex/`).
-- `git push` must target the current feature branch only (never `dev`/`main`).
-- Open a Pull Request to `dev` (or `main` only for explicit release flow).
+- `git push` must target the current feature branch only (never `main`).
+- Open a Pull Request to `main`.
 - Before `git push`/`gh pr create`, run local checks:
   - `cargo +nightly fmt --check`
   - `cargo +nightly clippy --all-targets --all-features -- -D warnings`

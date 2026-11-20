@@ -231,7 +231,7 @@ def version_pr(args):
     proposed = git("rev-parse", "HEAD")
     branch = "automation/release-" + plan["source"]
     repo = os.environ["GITHUB_REPOSITORY"]
-    prs = gh("pr", "list", "--repo", repo, "--base", "dev", "--head", branch,
+    prs = gh("pr", "list", "--repo", repo, "--base", "main", "--head", branch,
              "--state", "all", "--json", "number,headRefOid,state")
     if len(prs) > 1:
         raise ValueError("Multiple version PRs for one source")
@@ -253,7 +253,7 @@ def version_pr(args):
             body = Path(temp) / "body.txt"
             body.write_text(f'Release {plan["version"]} for tested source {plan["source"]}. '
                             'Native CI and security gates must pass before publication.', encoding="utf-8")
-            command("gh", "pr", "create", "--repo", repo, "--base", "dev", "--head", branch,
+            command("gh", "pr", "create", "--repo", repo, "--base", "main", "--head", branch,
                     "--title", f'chore: release {plan["version"]}', "--body-file", str(body))
         pr = gh("pr", "view", branch, "--repo", repo, "--json", "number,headRefOid,state")
         head = checked_sha(pr["headRefOid"])
@@ -272,7 +272,7 @@ def await_version(args):
     else:
         from release_gate import wait_for_merge
         merged = wait_for_merge(os.environ["GITHUB_REPOSITORY"], int(args.pr),
-                                checked_sha(args.head), "dev")
+                                checked_sha(args.head), "main")
     output(merged=merged)
 
 

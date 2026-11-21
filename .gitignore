@@ -33,3 +33,5 @@ target
 # Local Python policy test caches
 __pycache__/
 *.py[cod]
+
+/graphify-out/
